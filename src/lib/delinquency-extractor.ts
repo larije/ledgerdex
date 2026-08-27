@@ -21,8 +21,9 @@ import {
 
 interface TextItem {
   str: string;
-  x: number;
+  x: number; // left edge
   y: number; // top-origin (0 = top of page)
+  c: number; // horizontal center (x + width/2) — used for column bucketing
 }
 
 interface Line {
@@ -87,6 +88,7 @@ function groupLines(items: TextItem[]): Line[] {
 // ── Header / column map ───────────────────────────────────────
 
 type ColKey =
+  | "rowNo"
   | "tdNumber"
   | "pin"
   | "barangay"
@@ -127,10 +129,14 @@ function isNoiseLine(line: Line): boolean {
 /** Assign X positions to columns from one (already merged) header line. */
 function buildColumnMap(headerItems: TextItem[]): ColumnMap | null {
   const map: ColumnMap = {};
-  const sorted = [...headerItems].sort((a, b) => a.x - b.x);
+  // Column positions and cell bucketing use each item's horizontal CENTER, not
+  // its left edge: header labels are centered over their column while data (esp.
+  // long taxpayer names) is left-aligned, so left-edge boundaries misfile the
+  // leftmost text into the previous column. Centers line up reliably.
+  const sorted = [...headerItems].sort((a, b) => a.c - b.c);
   for (const it of sorted) {
     const t = it.str.toUpperCase().trim();
-    const x = it.x;
+    const x = it.c;
     if (t.includes("TAXPAYER")) map.taxpayer ??= x;
     else if (t.includes("CADASTRAL") || t.includes("LOT")) map.cadastral ??= x;
     else if (t.includes("BARANGAY")) map.barangay ??= x;
@@ -142,6 +148,7 @@ function buildColumnMap(headerItems: TextItem[]): ColumnMap | null {
     else if (t.includes("START")) map.start ??= x;
     else if (t.includes("END")) map.end ??= x;
     else if (t.includes("TYPE")) map.rpuType ??= x; // fallback if "RPU" split off
+    else if (t === "NO." || t === "NO") map.rowNo ??= x; // leftmost "NO." column
     else if (t.includes("TD")) map.tdNumber ??= x;
   }
   // Minimum columns needed to make sense of a row.
@@ -177,7 +184,7 @@ function columnBounds(map: ColumnMap): { key: ColKey; x: number; left: number }[
 
 function cellText(items: TextItem[], lo: number, hi: number): string {
   return items
-    .filter((it) => it.x >= lo && it.x < hi)
+    .filter((it) => it.c >= lo && it.c < hi)
     .sort((a, b) => a.y - b.y || a.x - b.x)
     .map((i) => i.str.trim())
     .join(" ")
@@ -199,14 +206,19 @@ function extractRow(
     return cellText(items, lo, hi);
   };
 
-  // Row number: everything left of the first column boundary.
-  const rowNoText = cellText(items, -Infinity, bounds[0].left);
-  const rowNo = /\d/.test(rowNoText) ? parseInt(rowNoText.replace(/\D/g, ""), 10) : null;
-
   const tdRaw = get("tdNumber");
   const tdMatch = tdRaw.match(TD_RE);
   const tdNumber = tdMatch ? tdMatch[0] : tdRaw.trim();
   if (!tdNumber) return null;
+
+  // Row number: prefer a dedicated "NO." column; else the digits before the TD
+  // number in the TD cell; else anything left of the first column boundary.
+  const rowNoRaw =
+    get("rowNo") ||
+    (tdMatch ? tdRaw.slice(0, tdMatch.index ?? 0) : "") ||
+    cellText(items, -Infinity, bounds[0].left);
+  const rowNoMatch = rowNoRaw.match(/\d+/);
+  const rowNo = rowNoMatch ? parseInt(rowNoMatch[0], 10) : null;
 
   const from = parsePeriod(get("start"));
   const to = parsePeriod(get("end"));
@@ -288,6 +300,7 @@ export async function extractDelinquencyPDF(
         str: it.str as string,
         x: it.transform[4] as number,
         y: viewport.height - (it.transform[5] as number),
+        c: (it.transform[4] as number) + ((it.width as number) || 0) / 2,
       }));
 
     if (pageNum === 1) firstPageText = items.map((i) => i.str).join(" ");
