@@ -54,20 +54,28 @@ export function buildAccountWhere(sp: URLSearchParams) {
   return AND.length ? { AND } : {};
 }
 
-export type AccountSort = "amount" | "balance" | "taxpayer" | "period" | "recent";
+export type AccountSort = "rowNo" | "amount" | "balance" | "taxpayer" | "period" | "recent";
 
-export function buildAccountOrderBy(sort: string | null) {
+import { Prisma } from "@/generated/prisma";
+
+export function buildAccountOrderBy(
+  sort: string | null
+): Prisma.DelinquentAccountOrderByWithRelationInput[] {
   switch (sort) {
     case "taxpayer":
-      return [{ taxpayerName: "asc" as const }];
+      return [{ taxpayerName: "asc" }];
     case "period":
-      return [{ delinquentFromYear: "asc" as const }];
+      return [{ delinquentFromYear: "asc" }];
     case "recent":
-      return [{ createdAt: "desc" as const }];
+      return [{ createdAt: "desc" }];
     case "amount":
-      return [{ amountDue: "desc" as const }];
+      return [{ amountDue: "desc" }];
     case "balance":
+      return [{ balance: "desc" }];
+    case "rowNo":
     default:
-      return [{ balance: "desc" as const }];
+      // PDF order: the "NO." column, grouped by municipality so multiple lists
+      // don't interleave. This mirrors how the accounts appear in the source PDF.
+      return [{ list: { municipality: "asc" } }, { rowNo: "asc" }];
   }
 }

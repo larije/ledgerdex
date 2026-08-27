@@ -37,7 +37,7 @@ interface Filters {
 }
 const DEFAULT_FILTERS: Filters = {
   search: "", municipality: "", barangay: "", status: "",
-  classCode: "", rpuType: "", presence: "present", sort: "balance",
+  classCode: "", rpuType: "", presence: "present", sort: "rowNo",
 };
 
 /** Copy-to-clipboard button (LAN/http safe via lib/utils fallback). */
@@ -164,6 +164,12 @@ export default function DelinquentAccountsPage() {
     [lists]
   );
 
+  // Header sort button styling — highlights the active sort column.
+  const sortCls = (key: string) =>
+    `hover:text-slate-700 dark:hover:text-slate-200 ${
+      filters.sort === key ? "text-blue-600 dark:text-blue-400 font-bold" : ""
+    }`;
+
   const openAccount = (id: string) => {
     try { sessionStorage.setItem(LAST_VIEWED_KEY, id); } catch { /* ignore */ }
     setHighlightId(id);
@@ -263,28 +269,33 @@ export default function DelinquentAccountsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wide">
+                <th className="text-right px-3 py-3 font-medium w-12">
+                  <button onClick={() => updateFilter({ sort: "rowNo" })} className={sortCls("rowNo")} title="PDF order (No.)">#</button>
+                </th>
                 <th className="text-left px-4 py-3 font-medium">TD No.</th>
-                <th className="text-left px-3 py-3 font-medium">Taxpayer</th>
+                <th className="text-left px-3 py-3 font-medium">
+                  <button onClick={() => updateFilter({ sort: "taxpayer" })} className={sortCls("taxpayer")}>Taxpayer</button>
+                </th>
                 <th className="text-left px-3 py-3 font-medium">Location</th>
                 <th className="text-left px-3 py-3 font-medium">Class / Type</th>
                 <th className="text-left px-3 py-3 font-medium">
-                  <button onClick={() => updateFilter({ sort: "period" })} className="hover:text-slate-700">Delinquent</button>
+                  <button onClick={() => updateFilter({ sort: "period" })} className={sortCls("period")}>Delinquent</button>
                 </th>
                 <th className="text-right px-3 py-3 font-medium">
-                  <button onClick={() => updateFilter({ sort: "amount" })} className="hover:text-slate-700">Amount Due</button>
+                  <button onClick={() => updateFilter({ sort: "amount" })} className={sortCls("amount")}>Amount Due</button>
                 </th>
                 <th className="text-right px-3 py-3 font-medium">
-                  <button onClick={() => updateFilter({ sort: "balance" })} className="hover:text-slate-700">Balance</button>
+                  <button onClick={() => updateFilter({ sort: "balance" })} className={sortCls("balance")}>Balance</button>
                 </th>
                 <th className="text-left px-3 py-3 font-medium">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {loading && (
-                <tr><td colSpan={8} className="text-center py-12"><Loader2 size={20} className="animate-spin text-slate-400 mx-auto" /></td></tr>
+                <tr><td colSpan={9} className="text-center py-12"><Loader2 size={20} className="animate-spin text-slate-400 mx-auto" /></td></tr>
               )}
               {!loading && accounts.length === 0 && (
-                <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No delinquent accounts match your filters.</td></tr>
+                <tr><td colSpan={9} className="text-center py-12 text-slate-400 text-sm">No delinquent accounts match your filters.</td></tr>
               )}
               {accounts.map((a) => {
                 const isHighlight = a.id === highlightId;
@@ -298,6 +309,7 @@ export default function DelinquentAccountsPage() {
                         : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
                     }`}
                   >
+                    <td className="px-3 py-2.5 text-right text-xs text-slate-400 tabular-nums">{a.rowNo ?? "—"}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1.5">
                         <Link
@@ -334,7 +346,7 @@ export default function DelinquentAccountsPage() {
             {!loading && accounts.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold text-slate-800 dark:text-slate-200">
-                  <td colSpan={5} className="px-4 py-3 text-right text-xs uppercase tracking-wide text-slate-500">Filter totals →</td>
+                  <td colSpan={6} className="px-4 py-3 text-right text-xs uppercase tracking-wide text-slate-500">Filter totals →</td>
                   <td className="px-3 py-3 text-right">{formatCurrency(totals.amountDue)}</td>
                   <td className="px-3 py-3 text-right text-red-600">{formatCurrency(totals.balance)}</td>
                   <td />

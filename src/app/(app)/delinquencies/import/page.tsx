@@ -221,6 +221,7 @@ export default function ImportDelinquencyPage() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-500 uppercase tracking-wide">
                   <tr>
+                    <th className="text-right px-3 py-2 font-medium">#</th>
                     <th className="text-left px-3 py-2 font-medium">TD No.</th>
                     <th className="text-left px-3 py-2 font-medium">Barangay</th>
                     <th className="text-left px-3 py-2 font-medium">Class</th>
@@ -234,6 +235,7 @@ export default function ImportDelinquencyPage() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {data.doc.rows.slice(0, 300).map((r, i) => (
                     <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                      <td className="px-3 py-1.5 text-right text-slate-400 tabular-nums">{r.rowNo ?? i + 1}</td>
                       <td className="px-3 py-1.5 font-mono text-slate-700 dark:text-slate-300">{r.tdNumber}</td>
                       <td className="px-3 py-1.5 text-slate-600 dark:text-slate-400">{r.barangay ?? "—"}</td>
                       <td className="px-3 py-1.5 text-slate-600 dark:text-slate-400">{classCodeLabel(r.classCode)}</td>

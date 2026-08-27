@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
 
     const accounts = await prisma.delinquentAccount.findMany({
       where,
-      orderBy: [{ list: { municipality: "asc" } }, ...buildAccountOrderBy(sp.get("sort"))],
+      orderBy: buildAccountOrderBy(sp.get("sort")),
       include: { list: { select: { municipality: true } } },
     });
 
