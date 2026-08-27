@@ -321,6 +321,13 @@ export default function DelinquentAccountsPage() {
                         </Link>
                         <CopyBtn text={a.tdNumber} />
                         {!a.isPresent && <RotateCcw size={11} className="text-slate-400" aria-label="off current list" />}
+                        {a.notes && a.notes.trim() !== "" && (
+                          <span
+                            className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-900 shrink-0"
+                            title="Has a note"
+                            aria-label="Has a note"
+                          />
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2.5 text-slate-800 dark:text-slate-200 max-w-[220px] truncate">{a.taxpayerName}</td>
