@@ -220,6 +220,26 @@ function extractRow(
   const rowNoMatch = rowNoRaw.match(/\d+/);
   const rowNo = rowNoMatch ? parseInt(rowNoMatch[0], 10) : null;
 
+  const bandItems = (key: ColKey): TextItem[] => {
+    const idx = bounds.findIndex((b) => b.key === key);
+    if (idx < 0) return [];
+    const lo = bounds[idx].left;
+    const hi = idx + 1 < bounds.length ? bounds[idx + 1].left : Infinity;
+    return items.filter((it) => it.c >= lo && it.c < hi);
+  };
+  // Taxpayer = its own band + any alphabetic text that leaked into the numeric
+  // AREA band (short names / wrapped-name fragments centered just left of the
+  // boundary). Area itself is parsed numerically so the leaked text is ignored.
+  const taxpayerName = [
+    ...bandItems("taxpayer"),
+    ...bandItems("area").filter((it) => /[A-Za-z]/.test(it.str)),
+  ]
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map((i) => i.str.trim())
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
   const from = parsePeriod(get("start"));
   const to = parsePeriod(get("end"));
   const amountDue = toNumber(get("total"));
@@ -233,7 +253,7 @@ function extractRow(
     classCode: parseClassCode(get("classCode")),
     rpuType: parseRpuType(get("rpuType")),
     areaSqm: toNumber(get("area")),
-    taxpayerName: get("taxpayer"),
+    taxpayerName,
     cadastralLotNo: get("cadastral") || null,
     delinquentFromYear: from.year,
     delinquentFromQuarter: from.quarter,
@@ -326,22 +346,41 @@ export async function extractDelinquencyPDF(
 
     const bounds = columnBounds(columnMap);
 
-    // Anchor lines = lines containing a TD number. A logical row = an anchor
-    // line plus the continuation lines below it (wrapped taxpayer name) up to
-    // the next anchor / noise line.
-    const anchorIdxs = lines
-      .map((l, i) => (isDataLine(l) ? i : -1))
-      .filter((i) => i >= 0);
+    // Group lines into logical rows by vertical GAP. Lines belonging to one row
+    // (a wrapped taxpayer name, the row number, the data line) sit ~half the row
+    // pitch apart, while adjacent rows are a full pitch apart. Cluster on a
+    // threshold of 75% of the median line spacing, so a wrapped name is captured
+    // with its row whether the extra line is above or below the data line —
+    // nearest-anchor fails because a wrapped line can be closer to the row above.
+    const contentLines = lines.filter((l) => {
+      // A line containing a TD number is ALWAYS a data row — never drop it as
+      // noise/header, even when the taxpayer is a government owner whose name
+      // matches a header/footer phrase ("REPUBLIC OF THE PHILIPPINES",
+      // "PROVINCE OF DAVAO DEL NORTE", etc.).
+      if (TD_RE.test(l.items.map((i) => i.str).join(" "))) return true;
+      return !isNoiseLine(l) && !isHeaderLine(l);
+    });
+    const gaps: number[] = [];
+    for (let i = 1; i < contentLines.length; i++) {
+      gaps.push(contentLines[i].y - contentLines[i - 1].y);
+    }
+    const sortedGaps = [...gaps].sort((a, b) => a - b);
+    const medianGap = sortedGaps.length ? sortedGaps[Math.floor(sortedGaps.length / 2)] : 13;
+    const threshold = medianGap * 0.75;
 
-    for (let a = 0; a < anchorIdxs.length; a++) {
-      const startIdx = anchorIdxs[a];
-      const nextAnchor = a + 1 < anchorIdxs.length ? anchorIdxs[a + 1] : lines.length;
-      const rowItems: TextItem[] = [...lines[startIdx].items];
-      for (let j = startIdx + 1; j < nextAnchor; j++) {
-        if (isNoiseLine(lines[j]) || isHeaderLine(lines[j])) continue;
-        rowItems.push(...lines[j].items);
+    const clusters: TextItem[][] = [];
+    let current: TextItem[] = [];
+    for (let i = 0; i < contentLines.length; i++) {
+      if (i > 0 && current.length && contentLines[i].y - contentLines[i - 1].y > threshold) {
+        clusters.push(current);
+        current = [];
       }
+      current.push(...contentLines[i].items);
+    }
+    if (current.length) clusters.push(current);
 
+    for (const rowItems of clusters) {
+      if (!TD_RE.test(rowItems.map((i) => i.str).join(" "))) continue; // no TD anchor
       try {
         const parsed = extractRow(rowItems, bounds);
         if (parsed && parsed.tdNumber) rows.push(parsed);
@@ -354,7 +393,7 @@ export async function extractDelinquencyPDF(
       } catch (e) {
         rowErrors.push({
           rowNo: null,
-          raw: lines[startIdx].items.map((i) => i.str).join(" ").slice(0, 200),
+          raw: rowItems.map((i) => i.str).join(" ").slice(0, 200),
           reason: e instanceof Error ? e.message : "parse error",
         });
       }
