@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ledgerdex_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ledgerdex123
+      MYSQL_DATABASE:      ledgerdex
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pledgerdex123"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: ledgerdex_app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "mysql://root:ledgerdex123@mysql:3306/ledgerdex"
+      JWT_SECRET: "ledgerdex-jwt-secret-change-in-production"
+      NODE_ENV: "production"
+      PORT: 3100
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+
+volumes:
+  mysql_data:

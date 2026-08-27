@@ -1,0 +1,341 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  name      String
+  role      Role     @default(ENCODER)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents   Document[]
+  auditLogs   AuditLog[]
+  payments    Payment[]
+  remarks     Remark[]
+  attachments Attachment[]
+
+  settlementPayments SettlementPayment[]
+  delinquencyImports DelinquencyImport[]
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  ASSESSOR
+  ENCODER
+  VIEWER
+}
+
+model Document {
+  id               String           @id @default(cuid())
+  originalName     String
+  storedName       String           @unique
+  fileSize         Int
+  taxpayerName     String?
+  taxpayerAddress  String?
+  noaCount         String?
+  assessmentYear   Int?
+  municipality     String?
+  extractionStatus ExtractionStatus @default(PENDING)
+  extractedCount   Int              @default(0)
+  uploadedById     String?
+  uploadedBy       User?            @relation(fields: [uploadedById], references: [id])
+  properties       Property[]
+  auditLogs        AuditLog[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([municipality])
+  @@index([extractionStatus])
+  @@map("documents")
+}
+
+enum ExtractionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Property {
+  id                String        @id @default(cuid())
+  documentId        String?
+  document          Document?     @relation(fields: [documentId], references: [id])
+  tdNumber          String        @unique
+  propertyIndexNo   String?
+  propertyLocation  String?       @db.Text
+  barangay          String?
+  municipality      String?
+  lotBlockNo        String?
+  class             String?
+  type              PropertyType
+  area              Decimal?      @db.Decimal(12, 4)
+  marketValue       Decimal?      @db.Decimal(15, 2)
+  assessedValue     Decimal?      @db.Decimal(15, 2)
+  effectivity       Int?
+  taxability        Taxability    @default(TAXABLE)
+  taxesBeginYear    Int?
+  taxesBeginQuarter Int?
+  paymentStatus     PaymentStatus @default(UNPAID)
+  paidUpToYear      Int?
+  paidUpToQuarter   Int?
+  isManualEntry     Boolean       @default(false)
+  isChecked         Boolean       @default(false)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  remarks     Remark[]
+  payments    Payment[]
+  attachments Attachment[]
+  auditLogs   AuditLog[]
+
+  @@index([tdNumber])
+  @@index([municipality, barangay])
+  @@index([paymentStatus])
+  @@index([taxability])
+  @@index([type])
+  @@map("properties")
+}
+
+enum PropertyType {
+  LAND
+  BLDG
+  MACH
+  MISC
+}
+
+enum Taxability {
+  TAXABLE
+  EXEMPT
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  UNPAID
+  DELINQUENT
+  ADVANCE
+  CURRENT
+}
+
+model Payment {
+  id           String    @id @default(cuid())
+  propertyId   String
+  property     Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  orNumber     String?
+  paymentDate  DateTime?
+  amount       Decimal   @db.Decimal(15, 2)
+  collector    String?
+  year         Int?
+  quarter      Int?
+  notes        String?   @db.Text
+  recordedById String?
+  recordedBy   User?     @relation(fields: [recordedById], references: [id])
+  createdAt    DateTime  @default(now())
+
+  @@index([propertyId])
+  @@map("payments")
+}
+
+model Remark {
+  id          String      @id @default(cuid())
+  propertyId  String
+  property    Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  label       RemarkLabel
+  text        String      @db.Text
+  color       String      @default("#6B7280")
+  createdById String?
+  createdBy   User?       @relation(fields: [createdById], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([propertyId])
+  @@map("remarks")
+}
+
+enum RemarkLabel {
+  PAID
+  FOR_VERIFICATION
+  TAX_MAPPING
+  EXEMPT
+  DELINQUENT
+  ARCHIVED
+  OTHER
+}
+
+model Attachment {
+  id           String   @id @default(cuid())
+  propertyId   String
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  originalName String
+  storedName   String   @unique
+  fileSize     Int
+  mimeType     String
+  uploadedById String?
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([propertyId])
+  @@map("attachments")
+}
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  action     String
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id])
+  propertyId String?
+  property   Property? @relation(fields: [propertyId], references: [id])
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id])
+  details    String?   @db.Text
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([propertyId])
+  @@index([documentId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Delinquency Module — "Real Properties Whose Accounts Were Not Settled"
+// (Consolidated Summary of Delinquent Real Properties, RA 7160 §254)
+// ─────────────────────────────────────────────────────────────
+
+enum RpuType {
+  LAND
+  BLDG
+  MACH
+  PLANTTREE
+  MISC
+}
+
+enum SettlementStatus {
+  OUTSTANDING // on the list, nothing paid
+  PARTIAL // some paid, balance remains
+  SETTLED // fully paid or manually marked settled
+  RESOLVED // dropped off a newer list (assumed paid/removed)
+}
+
+/// One living delinquency list per municipality. Re-importing a newer
+/// snapshot reconciles into this same list (see lib/delinquency-reconcile.ts).
+model DelinquencyList {
+  id             String    @id @default(cuid())
+  province       String    @default("Davao del Norte")
+  municipality   String
+  asOfDate       DateTime?
+  title          String?   @db.Text
+  lastImportedAt DateTime?
+  accountCount   Int       @default(0)
+  totalAmountDue Decimal   @default(0) @db.Decimal(18, 2)
+  totalSettled   Decimal   @default(0) @db.Decimal(18, 2)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  accounts DelinquentAccount[]
+  imports  DelinquencyImport[]
+
+  @@unique([province, municipality])
+  @@map("delinquency_lists")
+}
+
+/// One delinquent account = one row of the summary PDF.
+model DelinquentAccount {
+  id     String          @id @default(cuid())
+  listId String
+  list   DelinquencyList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  rowNo          Int? // "NO." column from latest import (informational)
+  tdNumber       String
+  pin            String?
+  barangay       String?
+  classCode      String? // A / R / C / I (raw); labelled in UI
+  rpuType        RpuType  @default(MISC)
+  areaSqm        Decimal? @db.Decimal(14, 2)
+  taxpayerName   String   @db.VarChar(255)
+  cadastralLotNo String?
+
+  delinquentFromYear    Int?
+  delinquentFromQuarter Int?
+  delinquentToYear      Int?
+  delinquentToQuarter   Int?
+
+  amountDue             Decimal          @db.Decimal(15, 2) // "TOTAL" from the list
+  amountPaid            Decimal          @default(0) @db.Decimal(15, 2)
+  balance               Decimal          @db.Decimal(15, 2) // amountDue - amountPaid
+  status                SettlementStatus @default(OUTSTANDING)
+  settledAt             DateTime?
+  reappearedAfterSettle Boolean          @default(false) // SETTLED acct returned on a newer list
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  isPresent   Boolean  @default(true) // still on the latest imported list
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settlements SettlementPayment[]
+
+  @@unique([listId, tdNumber])
+  @@index([listId])
+  @@index([tdNumber])
+  @@index([taxpayerName])
+  @@index([status])
+  @@index([barangay])
+  @@map("delinquent_accounts")
+}
+
+/// A settlement payment recorded against a delinquent account.
+model SettlementPayment {
+  id           String            @id @default(cuid())
+  accountId    String
+  account      DelinquentAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  amount       Decimal           @db.Decimal(15, 2)
+  orNumber     String? // Official Receipt no.
+  paymentDate  DateTime?
+  collector    String?
+  notes        String?           @db.Text
+  recordedById String?
+  recordedBy   User?             @relation(fields: [recordedById], references: [id])
+  createdAt    DateTime          @default(now())
+
+  @@index([accountId])
+  @@map("settlement_payments")
+}
+
+/// One row per uploaded PDF — the import/reconciliation history for a list.
+model DelinquencyImport {
+  id             String          @id @default(cuid())
+  listId         String
+  list           DelinquencyList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  fileName       String
+  storedName     String          @unique
+  fileSize       Int
+  asOfDate       DateTime?
+  rowsParsed     Int             @default(0)
+  rowsAdded      Int             @default(0)
+  rowsUpdated    Int             @default(0)
+  rowsResolved   Int             @default(0)
+  rowsReappeared Int             @default(0)
+  rowErrors      Int             @default(0)
+  totalAmountDue Decimal         @default(0) @db.Decimal(18, 2)
+  importedById   String?
+  importedBy     User?           @relation(fields: [importedById], references: [id])
+  createdAt      DateTime        @default(now())
+
+  @@index([listId])
+  @@map("delinquency_imports")
+}
