@@ -1,34 +1,44 @@
 "use client";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Search, Plus, Download, Filter, Loader2, Building2,
-  ChevronLeft, ChevronRight, ChevronDown, X, Copy, Check, Bookmark, BookmarkCheck,
+  Search, Plus, Loader2, Building2, FileSpreadsheet, FileDown, FileText,
+  ChevronLeft, ChevronRight, X, Copy, Check, Bookmark, BookmarkCheck,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { useToast } from "@/components/ui/Toast";
 import { Property } from "@/types";
 import {
-  formatCurrency, formatQuarter,
+  copyToClipboard, formatCurrency, formatQuarter,
   getPaymentStatusColor, getPropertyTypeLabel, MUNICIPALITIES,
 } from "@/lib/utils";
 import { exportToCSV, exportToExcel, exportToPDF } from "@/lib/export";
+import { classCodeLabel } from "@/lib/delinquency";
 
 const PROPERTY_TYPES = ["LAND", "BLDG", "MACH", "MISC"];
 const STATUSES       = ["PAID", "PARTIAL", "UNPAID", "DELINQUENT", "ADVANCE", "CURRENT"];
 
-const HEADERS = [
-  { label: "",                align: "center" },
-  { label: "TD Number",       align: "left"  },
-  { label: "Municipality",    align: "left"  },
-  { label: "Barangay",        align: "left"  },
-  { label: "Type",            align: "left"  },
-  { label: "Market Value",    align: "right" },
-  { label: "Assessed Value",  align: "right" },
-  { label: "Payment Status",  align: "center"},
-  { label: "Paid Up To",      align: "left"  },
+interface PropertyHeader {
+  label: string;
+  align: "left" | "right" | "center";
+  sortKey?: string;
+}
+
+const HEADERS: PropertyHeader[] = [
+  { label: "", align: "center" },
+  { label: "TD No.", align: "left", sortKey: "tdNumber" },
+  { label: "Municipality", align: "left", sortKey: "municipality" },
+  { label: "Barangay", align: "left", sortKey: "barangay" },
+  { label: "Class / Type", align: "left", sortKey: "classType" },
+  { label: "Market Value", align: "right", sortKey: "marketValue" },
+  { label: "Assessed Value", align: "right", sortKey: "assessedValue" },
+  { label: "Payment Status", align: "center", sortKey: "status" },
+  { label: "Paid Up To", align: "left", sortKey: "paidUpTo" },
 ];
 
 const STATUS_VARIANT: Record<string, string> = {
@@ -41,48 +51,67 @@ const STATUS_VARIANT: Record<string, string> = {
 };
 
 function PropertiesPage() {
-  const router       = useRouter();
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const { toast } = useToast();
 
   const [properties, setProperties] = useState<Property[]>([]);
-  const [total, setTotal]           = useState(0);
-  const [loading, setLoading]       = useState(true);
-
-  const [search,       setSearch]       = useState(() => searchParams.get("search")       ?? "");
+  const [total, setTotal] = useState(0);
+  const [totals, setTotals] = useState({ assessedValue: 0 });
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [barangays, setBarangays] = useState<string[]>([]);
+  const [search, setSearch] = useState(() => searchParams.get("search") ?? "");
   const [municipality, setMunicipality] = useState(() => searchParams.get("municipality") ?? "");
-  const [type,         setType]         = useState(() => searchParams.get("type")         ?? "");
-  const [status,       setStatus]       = useState(() => searchParams.get("status")       ?? "");
+  const [barangay, setBarangay] = useState(() => searchParams.get("barangay") ?? "");
+  const [type, setType] = useState(() => searchParams.get("type") ?? "");
+  const [classCode, setClassCode] = useState(() => searchParams.get("classCode") ?? "");
+  const [status, setStatus] = useState(() => searchParams.get("status") ?? "");
   const [checkedFilter, setCheckedFilter] = useState<"" | "true" | "false">(
     () => (searchParams.get("isChecked") as "" | "true" | "false") ?? "false"
   );
   const [page, setPage] = useState(() => Number(searchParams.get("page") ?? 1));
-  const [showFilters, setShowFilters]     = useState(
-    () => !!(searchParams.get("municipality") || searchParams.get("type") || searchParams.get("status"))
-  );
-  const [focusedFilter, setFocusedFilter] = useState<string | null>(null);
-  const [copiedTdId, setCopiedTdId]       = useState<string | null>(null);
+  const [sort, setSort] = useState(() => searchParams.get("sort") ?? "recent");
+  const [copiedTdId, setCopiedTdId] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const rowRef = useRef<HTMLTableRowElement | null>(null);
+  const LIMIT = 25;
+  const LAST_VIEWED_KEY = "properties_lastViewed";
 
-  // Keep URL in sync with filter state so back-navigation restores them
-  useEffect(() => {
+  const filterParams = useMemo(() => {
     const params = new URLSearchParams();
-    if (search)                    params.set("search",       search);
-    if (municipality)              params.set("municipality", municipality);
-    if (type)                      params.set("type",         type);
-    if (status)                    params.set("status",       status);
-    if (checkedFilter !== "false") params.set("isChecked",    checkedFilter);
-    if (page > 1)                  params.set("page",         String(page));
-    const qs = params.toString();
-    router.replace(`/properties${qs ? `?${qs}` : ""}`, { scroll: false });
-  }, [search, municipality, type, status, checkedFilter, page]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (search) params.set("search", search);
+    if (municipality) params.set("municipality", municipality);
+    if (barangay) params.set("barangay", barangay);
+    if (type) params.set("type", type);
+    if (classCode) params.set("classCode", classCode);
+    if (status) params.set("status", status);
+    if (checkedFilter) params.set("isChecked", checkedFilter);
+    if (sort) params.set("sort", sort);
+    return params;
+  }, [search, municipality, barangay, type, classCode, status, checkedFilter, sort]);
 
-  const copyTd = (id: string, tdNumber: string) => {
-    navigator.clipboard.writeText(tdNumber);
+  // Keep filters and page in the URL so returning from a property restores the list.
+  useEffect(() => {
+    const params = new URLSearchParams(filterParams);
+    if (sort === "recent") params.delete("sort");
+    if (page > 1) params.set("page", String(page));
+    const query = params.toString();
+    router.replace(`/properties${query ? `?${query}` : ""}`, { scroll: false });
+  }, [filterParams, page, router, sort]);
+
+  const copyTd = async (id: string, tdNumber: string) => {
+    const copied = await copyToClipboard(tdNumber);
+    if (!copied) {
+      toast("error", "Copy failed");
+      return;
+    }
     setCopiedTdId(id);
-    setTimeout(() => setCopiedTdId(null), 1500);
+    toast("success", "Copied", tdNumber);
+    setTimeout(() => setCopiedTdId(null), 1200);
   };
-
   const toggleChecked = async (id: string, current: boolean) => {
-    setProperties((prev) => prev.map((p) => p.id === id ? { ...p, isChecked: !current } : p));
+    setProperties((prev) => prev.map((property) => property.id === id ? { ...property, isChecked: !current } : property));
     await fetch(`/api/properties/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -91,8 +120,10 @@ function PropertiesPage() {
   };
 
   const openProperty = async (id: string, isChecked: boolean) => {
+    try { sessionStorage.setItem(LAST_VIEWED_KEY, id); } catch { /* ignore */ }
+    setHighlightId(id);
     if (localStorage.getItem("prop_autoCheck") === "true" && !isChecked) {
-      setProperties((prev) => prev.map((p) => p.id === id ? { ...p, isChecked: true } : p));
+      setProperties((prev) => prev.map((property) => property.id === id ? { ...property, isChecked: true } : property));
       fetch(`/api/properties/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -102,214 +133,186 @@ function PropertiesPage() {
     router.push(`/properties/${id}`);
   };
 
-  const LIMIT = 25;
-
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
-    if (search)         params.set("search",       search);
-    if (municipality)   params.set("municipality", municipality);
-    if (type)           params.set("type",         type);
-    if (status)         params.set("status",       status);
-    if (checkedFilter)  params.set("isChecked",    checkedFilter);
-    const res  = await fetch(`/api/properties?${params}`);
-    if (!res.ok) { setLoading(false); return; }
-    const data = await res.json();
-    setProperties(data.properties ?? []);
-    setTotal(data.total ?? 0);
-    setLoading(false);
-  }, [search, municipality, type, status, checkedFilter, page]);
+    const params = new URLSearchParams(filterParams);
+    params.set("page", String(page));
+    params.set("limit", String(LIMIT));
+    try {
+      const response = await fetch(`/api/properties?${params}`);
+      if (!response.ok) throw new Error("Could not load properties");
+      const data = await response.json();
+      setProperties(data.properties ?? []);
+      setTotal(data.total ?? 0);
+      setTotals(data.totals ?? { assessedValue: 0 });
+    } catch {
+      setProperties([]);
+      setTotal(0);
+      setTotals({ assessedValue: 0 });
+      toast("error", "Could not load properties", "Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, [filterParams, page, toast]);
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (municipality) params.set("municipality", municipality);
+    fetch(`/api/properties/barangays?${params}`)
+      .then((response) => response.json())
+      .then((data) => setBarangays(data.barangays ?? []))
+      .catch(() => setBarangays([]));
+  }, [municipality]);
+
+  useEffect(() => {
+    try { setHighlightId(sessionStorage.getItem(LAST_VIEWED_KEY)); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    if (!loading && rowRef.current) rowRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [loading, properties, highlightId]);
   const isFirstRender = useRef(true);
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return; }
     setPage(1);
-  }, [search, municipality, type, status, checkedFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, municipality, barangay, type, classCode, status, checkedFilter, sort]);
 
-  const totalPages   = Math.ceil(total / LIMIT);
-  const activeFilters = [municipality, type, status].filter(Boolean).length;
+  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+  const sortCls = (key: string) => `inline-flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-200 ${sort === key ? "text-blue-600 dark:text-blue-400 font-bold" : ""}`;
+  const activeFilters = [search, municipality, barangay, type, classCode, status].filter(Boolean).length + (checkedFilter !== "false" ? 1 : 0) + (sort !== "recent" ? 1 : 0);
 
   function clearFilters() {
+    setSearch("");
     setMunicipality("");
+    setBarangay("");
     setType("");
+    setClassCode("");
     setStatus("");
+    setCheckedFilter("false");
+    setSort("recent");
   }
 
+  const fetchAllForExport = async (): Promise<Property[]> => {
+    const all: Property[] = [];
+    let expectedTotal = Number.POSITIVE_INFINITY;
+    let exportPage = 1;
+    while (all.length < expectedTotal) {
+      const params = new URLSearchParams(filterParams);
+      params.set("page", String(exportPage));
+      params.set("limit", "5000");
+      const response = await fetch(`/api/properties?${params}`);
+      if (!response.ok) throw new Error("Could not export properties");
+      const data = await response.json();
+      const rows: Property[] = data.properties ?? [];
+      all.push(...rows);
+      expectedTotal = data.total ?? all.length;
+      if (rows.length === 0) break;
+      exportPage += 1;
+    }
+    return all;
+  };
+
+  const runExport = async (kind: "excel" | "csv" | "pdf") => {
+    setExporting(true);
+    try {
+      const all = await fetchAllForExport();
+      if (all.length === 0) {
+        toast("warning", "Nothing to export", "No properties match these filters.");
+        return;
+      }
+      if (kind === "excel") exportToExcel(all);
+      if (kind === "csv") exportToCSV(all);
+      if (kind === "pdf") exportToPDF(all);
+      toast("success", "Exported", `${all.length.toLocaleString()} properties.`);
+    } catch {
+      toast("error", "Export failed", "Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const sortBy = (key: string) => setSort(key);
   return (
-    <div className="animate-fade-in space-y-3">
-
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Properties</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            {total.toLocaleString()} record{total !== 1 ? "s" : ""}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm border transition font-medium
-              ${showFilters
-                ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-700"
-                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500"}`}
-          >
-            <Filter size={15} />
-            Filters
-            {activeFilters > 0 && (
-              <span className="ml-0.5 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {activeFilters}
-              </span>
-            )}
-            <ChevronDown size={14} className="transition-transform duration-200" style={{ transform: showFilters ? "rotate(180deg)" : "rotate(0deg)" }} />
-          </button>
-
-          <div className="relative group">
-            <button className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500 transition font-medium">
-              <Download size={15} />
-              Export
-              <ChevronDown size={14} className="transition-transform duration-200 group-hover:rotate-180" />
-            </button>
-            <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg dark:shadow-slate-900/50 z-20 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
-              <div className="p-1">
-                {[
-                  { label: "Export Excel", fn: () => exportToExcel(properties) },
-                  { label: "Export CSV",   fn: () => exportToCSV(properties)   },
-                  { label: "Export PDF",   fn: () => exportToPDF(properties)   },
-                ].map(({ label, fn }) => (
-                  <button key={label} onClick={fn}
-                    className="block w-full text-left px-3 py-2.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg">
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <Link href="/properties/new">
-            <button className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 transition font-semibold">
-              <Plus size={15} />
-              Add Manual
-            </button>
-          </Link>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-        <input
-          type="text"
-          placeholder="Search by TD number, barangay, municipality…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 text-base rounded-xl border border-slate-200 bg-white text-slate-800 placeholder:text-slate-400
-            focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition"
-        />
-        {search && (
-          <button onClick={() => setSearch("")}
-            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-            <X size={15} />
-          </button>
-        )}
-      </div>
-
-      {/* Checked filter pills */}
-      <div className="flex items-center gap-1.5">
-        {(["", "false", "true"] as const).map((val) => {
-          const label = val === "" ? "All" : val === "false" ? "Unchecked" : "Checked";
-          const active = checkedFilter === val;
-          return (
-            <button
-              key={val}
-              onClick={() => setCheckedFilter(val)}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium border transition
-                ${active
-                  ? val === "true"
-                    ? "bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700"
-                    : "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-300 dark:border-blue-700"
-                  : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500"}`}
-            >
-              {val === "true" && <BookmarkCheck size={13} />}
-              {val === "false" && <Bookmark size={13} />}
-              {label}
-            </button>
-          );
-        })}
-      </div>
+    <div className="animate-fade-in space-y-5">
+      <PageHeader
+        title="Properties"
+        subtitle={`${total.toLocaleString()} propert${total === 1 ? "y" : "ies"} · ${formatCurrency(totals.assessedValue)} assessed`}
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => runExport("excel")} loading={exporting}>
+              <FileSpreadsheet size={14} /> Excel
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => runExport("csv")} loading={exporting}>
+              <FileDown size={14} /> CSV
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => runExport("pdf")} loading={exporting}>
+              <FileText size={14} /> PDF
+            </Button>
+            <Button size="sm" onClick={() => router.push("/properties/new")}>
+              <Plus size={14} /> Add Manual
+            </Button>
+          </>
+        }
+      />
 
       {/* Filters */}
-      {showFilters && (
-        <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Filter by</p>
-            {activeFilters > 0 && (
-              <button onClick={clearFilters}
-                className="text-sm text-blue-600 hover:underline flex items-center gap-1">
-                <X size={13} /> Clear all
-              </button>
-            )}
+      <Card>
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="md:col-span-2">
+            <Input
+              placeholder="Search TD number, barangay, or municipality…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              icon={<Search size={14} />}
+            />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {[
-              {
-                label: "Municipality", value: municipality, onChange: setMunicipality,
-                placeholder: "All Municipalities",
-                options: MUNICIPALITIES.map((m) => ({ value: m, label: m })),
-              },
-              {
-                label: "Property Type", value: type, onChange: setType,
-                placeholder: "All Types",
-                options: PROPERTY_TYPES.map((t) => ({ value: t, label: getPropertyTypeLabel(t as Property["type"]) })),
-              },
-              {
-                label: "Payment Status", value: status, onChange: setStatus,
-                placeholder: "All Statuses",
-                options: STATUSES.map((s) => ({ value: s, label: s })),
-              },
-            ].map(({ label, value, onChange, placeholder, options }) => (
-              <div key={label}>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">{label}</label>
-                <div className="relative">
-                  <select
-                    value={value}
-                    onChange={(e) => onChange(e.target.value)}
-                    onFocus={() => setFocusedFilter(label)}
-                    onBlur={() => setFocusedFilter(null)}
-                    className="w-full px-3 py-2 pr-8 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200
-                      focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition appearance-none"
-                  >
-                    <option value="">{placeholder}</option>
-                    {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                  <ChevronDown
-                    size={14}
-                    className="pointer-events-none absolute right-2.5 top-1/2 text-slate-400 transition-transform duration-200"
-                    style={{ transform: focusedFilter === label ? "translateY(-50%) rotate(180deg)" : "translateY(-50%) rotate(0deg)" }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+          <Select value={municipality} onChange={(e) => { setMunicipality(e.target.value); setBarangay(""); }} placeholder="All municipalities">
+            {MUNICIPALITIES.map((m) => <option key={m} value={m}>{m}</option>)}
+          </Select>
+          <Select value={barangay} onChange={(e) => setBarangay(e.target.value)} placeholder="All barangays" disabled={barangays.length === 0}>
+            {barangays.map((name) => <option key={name} value={name}>{name}</option>)}
+          </Select>
+          <Select value={type} onChange={(e) => setType(e.target.value)} placeholder="All types">
+            {PROPERTY_TYPES.map((t) => <option key={t} value={t}>{getPropertyTypeLabel(t as Property["type"])}</option>)}
+          </Select>
+          <Select value={classCode} onChange={(e) => setClassCode(e.target.value)} placeholder="All classes">
+            {["A", "R", "C", "I", "S", "T", "M"].map((code) => <option key={code} value={code}>{classCodeLabel(code)}</option>)}
+          </Select>
+          <Select value={status} onChange={(e) => setStatus(e.target.value)} placeholder="All statuses">
+            {STATUSES.map((item) => <option key={item} value={item}>{item}</option>)}
+          </Select>
+          <Select value={checkedFilter} onChange={(e) => setCheckedFilter(e.target.value as "" | "true" | "false")}>
+            <option value="false">Unchecked</option>
+            <option value="">All properties</option>
+            <option value="true">Checked</option>
+          </Select>
+          {activeFilters > 0 && (
+            <div className="md:col-span-2 lg:col-span-4 flex justify-end">
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X size={14} /> Clear filters
+              </Button>
+            </div>
+          )}
         </div>
-      )}
-
+      </Card>
       {/* Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+      <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-[15px]">
+          <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-700">
+              <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wide">
                 {HEADERS.map((h, i) => (
                   <th
                     key={i}
-                    className={`px-4 py-3 text-sm font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap bg-slate-50 dark:bg-slate-800
+                    className={`px-3 py-3 font-medium whitespace-nowrap
                       ${h.align === "right" ? "text-right" : h.align === "center" ? "text-center" : "text-left"}`}
                   >
-                    {h.label === "" ? <Bookmark size={14} className="mx-auto opacity-50" /> : h.label}
+                    {h.label === "" ? <Bookmark size={14} className="mx-auto opacity-50" /> : h.sortKey ? (
+                      <button className={sortCls(h.sortKey)} onClick={() => sortBy(h.sortKey!)}>
+                        {h.label}
+                      </button>
+                    ) : h.label}
                   </th>
                 ))}
               </tr>
@@ -337,16 +340,15 @@ function PropertiesPage() {
                   </td>
                 </tr>
               )}
-              {properties.map((p, i) => (
+              {properties.map((p) => (
                 <tr
                   key={p.id}
+                  ref={p.id === highlightId ? rowRef : null}
                   onClick={() => openProperty(p.id, p.isChecked)}
-                  className={`group cursor-pointer transition-colors border-b border-slate-100 dark:border-slate-700/60 last:border-0
-                    hover:bg-blue-50/50 dark:hover:bg-blue-950/40
-                    ${i % 2 === 0 ? "bg-white dark:bg-slate-900" : "bg-slate-50/60 dark:bg-slate-800/40"}`}
+                  className={`group cursor-pointer transition border-b border-slate-100 dark:border-slate-800 ${p.id === highlightId ? "bg-blue-50/80 dark:bg-blue-900/25 ring-1 ring-inset ring-blue-300 dark:ring-blue-700" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"}`}
                 >
                   {/* Bookmark */}
-                  <td className="px-3 py-3 text-center">
+                  <td className="px-3 py-2.5 text-center">
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleChecked(p.id, p.isChecked); }}
                       title={p.isChecked ? "Mark as unchecked" : "Mark as checked"}
@@ -359,7 +361,7 @@ function PropertiesPage() {
                   </td>
 
                   {/* TD Number — click to copy */}
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  <td className="px-4 py-2.5 whitespace-nowrap">
                     <button
                       onClick={(e) => { e.stopPropagation(); copyTd(p.id, p.tdNumber); }}
                       title="Click to copy TD Number"
@@ -373,39 +375,39 @@ function PropertiesPage() {
                   </td>
 
                   {/* Municipality */}
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                  <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">
                     {p.municipality ?? <span className="text-slate-300 dark:text-slate-600">—</span>}
                   </td>
 
                   {/* Barangay */}
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                  <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300">
                     {p.barangay ?? <span className="text-slate-300 dark:text-slate-600">—</span>}
                   </td>
 
-                  {/* Type */}
-                  <td className="px-4 py-3">
-                    <Badge variant="info">{getPropertyTypeLabel(p.type)}</Badge>
+                  {/* Class / type */}
+                  <td className="px-3 py-2.5 text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                    {classCodeLabel(p.class)} · {getPropertyTypeLabel(p.type)}
                   </td>
 
                   {/* Market Value */}
-                  <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-medium tabular-nums whitespace-nowrap">
+                  <td className="px-3 py-2.5 text-right text-slate-600 dark:text-slate-400 font-medium tabular-nums whitespace-nowrap">
                     {formatCurrency(p.marketValue as unknown as number)}
                   </td>
 
                   {/* Assessed Value */}
-                  <td className="px-4 py-3 text-right text-slate-800 dark:text-slate-100 font-semibold tabular-nums whitespace-nowrap">
+                  <td className="px-3 py-2.5 text-right text-slate-800 dark:text-slate-100 font-semibold tabular-nums whitespace-nowrap">
                     {formatCurrency(p.assessedValue as unknown as number)}
                   </td>
 
                   {/* Payment Status */}
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-3 py-2.5 text-center">
                     <span className={`inline-flex px-3 py-1 rounded-full text-sm font-bold border ${STATUS_VARIANT[p.paymentStatus] ?? getPaymentStatusColor(p.paymentStatus)}`}>
                       {p.paymentStatus}
                     </span>
                   </td>
 
                   {/* Paid Up To */}
-                  <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                  <td className="px-3 py-2.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">
                     {(() => {
                       const lp = p.payments?.[0] as { year?: number; quarter?: number } | undefined;
                       const year    = lp?.year    ?? p.paidUpToYear;
@@ -421,39 +423,19 @@ function PropertiesPage() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/50">
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Showing{" "}
-              <span className="font-semibold text-slate-700 dark:text-slate-200">
-                {((page - 1) * LIMIT) + 1}–{Math.min(page * LIMIT, total)}
-              </span>{" "}
-              of{" "}
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{total.toLocaleString()}</span>
-            </p>
-            <div className="flex items-center gap-1.5">
-              <button
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800
-                  text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition font-medium"
-              >
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 dark:border-slate-800 text-sm">
+            <span className="text-slate-500 dark:text-slate-400">Page {page} of {totalPages}</span>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft size={14} /> Prev
-              </button>
-              <span className="text-sm text-slate-500 dark:text-slate-400 px-2 font-medium">
-                {page} / {totalPages}
-              </span>
-              <button
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800
-                  text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition font-medium"
-              >
+              </Button>
+              <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
                 Next <ChevronRight size={14} />
-              </button>
+              </Button>
             </div>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

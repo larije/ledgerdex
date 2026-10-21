@@ -3,7 +3,7 @@ import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, Loader2, Upload, ListFilter, Trash2, FileClock, Building2,
+  ArrowLeft, Loader2, Upload, ListFilter, Trash2, FileClock, Building2, Eye, MoreHorizontal,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -61,6 +61,20 @@ export default function ListDetailPage({ params }: { params: Promise<{ listId: s
           <>
             <Link href="/delinquencies/accounts"><Button variant="secondary" size="sm"><ListFilter size={14} /> View Accounts</Button></Link>
             <Link href="/delinquencies/import"><Button size="sm"><Upload size={14} /> Import Newer</Button></Link>
+            <details className="group relative">
+              <summary
+                aria-label="More list actions"
+                title="More list actions"
+                className="inline-flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-blue-500 [&::-webkit-details-marker]:hidden dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+              >
+                <MoreHorizontal size={19} aria-hidden="true" />
+              </summary>
+              <div className="absolute right-0 top-full z-50 mt-2 min-w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                <Button variant="ghost" size="sm" className="w-full justify-start text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300" onClick={deleteList}>
+                  <Trash2 size={14} /> Delete List
+                </Button>
+              </div>
+            </details>
           </>
         }
       />
@@ -114,7 +128,18 @@ export default function ListDetailPage({ params }: { params: Promise<{ listId: s
               {list.imports.map((imp) => (
                 <tr key={imp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                   <td className="px-5 py-2.5 text-slate-600 dark:text-slate-300 text-xs">{formatDateTime(imp.createdAt)}</td>
-                  <td className="px-3 py-2.5 text-slate-600 dark:text-slate-400 text-xs max-w-[220px] truncate">{imp.fileName}</td>
+                  <td className="max-w-[220px] px-3 py-2.5 text-xs">
+                    <a
+                      href={`/api/delinquencies/imports/${encodeURIComponent(imp.id)}/view`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`View ${imp.fileName}`}
+                      className="inline-flex max-w-full items-center gap-1.5 truncate text-slate-600 hover:text-blue-600 hover:underline dark:text-slate-400 dark:hover:text-blue-400"
+                    >
+                      <Eye size={13} className="shrink-0" aria-hidden="true" />
+                      <span className="truncate">{imp.fileName}</span>
+                    </a>
+                  </td>
                   <td className="px-3 py-2.5 text-right text-slate-700 dark:text-slate-300">{imp.rowsParsed}</td>
                   <td className="px-3 py-2.5 text-right text-emerald-600">{imp.rowsAdded}</td>
                   <td className="px-3 py-2.5 text-right text-slate-600 dark:text-slate-400">{imp.rowsUpdated}</td>
@@ -128,9 +153,6 @@ export default function ListDetailPage({ params }: { params: Promise<{ listId: s
         </div>
       </Card>
 
-      <div className="flex justify-end">
-        <Button variant="danger" size="sm" onClick={deleteList}><Trash2 size={14} /> Delete List</Button>
-      </div>
     </div>
   );
 }

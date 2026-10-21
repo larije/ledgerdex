@@ -7,6 +7,7 @@ import {
   SETTLEMENT_STATUS_COLORS,
   classCodeLabel,
   formatDelinquentPeriod,
+  getAccountDisplayStatus,
 } from "./delinquency";
 
 const fmt = (v: number | null | undefined) =>
@@ -45,7 +46,7 @@ export function exportDelinquentAccountsCSV(
     num(a.amountDue).toFixed(2),
     num(a.amountPaid).toFixed(2),
     num(a.balance).toFixed(2),
-    SETTLEMENT_STATUS_LABELS[a.status],
+    SETTLEMENT_STATUS_LABELS[getAccountDisplayStatus(a.status, a.etracsStatus, Number(a.balance))],
   ]);
   const csv = [CSV_HEADERS, ...rows]
     .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
@@ -147,7 +148,7 @@ export function exportDelinquencySummaryPDF(
         ),
         fmt(a.amountDue),
         fmt(a.balance),
-        SETTLEMENT_STATUS_LABELS[a.status],
+        SETTLEMENT_STATUS_LABELS[getAccountDisplayStatus(a.status, a.etracsStatus, Number(a.balance))],
       ]);
     }
   }

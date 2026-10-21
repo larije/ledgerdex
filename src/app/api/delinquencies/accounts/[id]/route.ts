@@ -3,7 +3,40 @@ import prisma from "@/lib/prisma";
 import { getRequestUser, canWrite, canManage } from "@/lib/request-user";
 import { createAuditLog } from "@/lib/audit";
 import { recomputeListTotals } from "@/lib/delinquency-settle";
+import { normalizeEtracsPaymentHistory } from "@/lib/etracs-sync";
+import { getEtracsStatusForBalance, getSettlementStatusForBalance } from "@/lib/delinquency";
 import { SettlementStatus } from "@/types";
+
+interface EtracsSnapshotRow {
+  accountId: string;
+  faasId: string;
+  amountDue: unknown;
+  amountPaid: unknown;
+  balance: unknown;
+  projectedAmountDue: unknown;
+  projectionYear: number | null;
+  status: "OUTSTANDING" | "PARTIAL" | "SETTLED";
+  lastPaidYear: number | null;
+  lastPaidQuarter: number | null;
+  paymentHistory: unknown;
+  paymentHistoryTruncated: boolean | number;
+  syncedAt: Date | string;
+}
+
+function serializeEtracsSnapshot(row: EtracsSnapshotRow | undefined) {
+  if (!row) return null;
+  return {
+    ...row,
+    status: getEtracsStatusForBalance(row.status, Number(row.balance)),
+    amountDue: Number(row.amountDue),
+    amountPaid: Number(row.amountPaid),
+    balance: Number(row.balance),
+    projectedAmountDue: row.projectedAmountDue == null ? null : Number(row.projectedAmountDue),
+    paymentHistory: normalizeEtracsPaymentHistory(row.paymentHistory),
+    paymentHistoryTruncated: Boolean(row.paymentHistoryTruncated),
+    syncedAt: row.syncedAt instanceof Date ? row.syncedAt.toISOString() : row.syncedAt,
+  };
+}
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -19,7 +52,21 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
       },
     });
     if (!account) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ account });
+    const snapshots = await prisma.$queryRaw<EtracsSnapshotRow[]>`
+      SELECT accountId, faasId, amountDue, amountPaid, balance,
+        projectedAmountDue, projectionYear, status,
+        lastPaidYear, lastPaidQuarter, paymentHistory, paymentHistoryTruncated, syncedAt
+      FROM etracs_sync_snapshots
+      WHERE accountId = ${id}
+      LIMIT 1
+    `;
+    return NextResponse.json({
+      account: {
+        ...account,
+        status: getSettlementStatusForBalance(account.status, Number(account.balance)),
+        etracsSnapshot: serializeEtracsSnapshot(snapshots[0]),
+      },
+    });
   } catch (e) {
     console.error("[GET /api/delinquencies/accounts/[id]]", e);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
@@ -44,8 +91,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!valid.includes(body.status)) {
         return NextResponse.json({ error: "Invalid status" }, { status: 400 });
       }
-      data.status = body.status;
-      data.settledAt = body.status === "SETTLED" ? new Date() : null;
+      const current = await prisma.delinquentAccount.findUnique({
+        where: { id },
+        select: { balance: true },
+      });
+      if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      data.status = getSettlementStatusForBalance(body.status, Number(current.balance));
+      data.settledAt = data.status === "SETTLED" ? new Date() : null;
     }
 
     if (Object.keys(data).length === 0) {

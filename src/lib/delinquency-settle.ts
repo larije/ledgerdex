@@ -22,17 +22,18 @@ export async function recomputeAccountSettlement(accountId: string) {
   });
   const paid = Number(agg._sum.amount ?? 0);
   const due = Number(acc.amountDue);
+  const balance = due - paid;
 
   let status = acc.status;
   if (status !== "RESOLVED") {
-    status = paid <= 0 ? "OUTSTANDING" : paid < due ? "PARTIAL" : "SETTLED";
+    status = balance <= 0 ? "SETTLED" : paid <= 0 ? "OUTSTANDING" : "PARTIAL";
   }
 
   await prisma.delinquentAccount.update({
     where: { id: accountId },
     data: {
       amountPaid: paid,
-      balance: due - paid,
+      balance,
       status,
       settledAt: status === "SETTLED" ? acc.settledAt ?? new Date() : null,
     },

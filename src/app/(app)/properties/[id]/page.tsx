@@ -4,7 +4,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Edit2, Save, X, Plus, Trash2, Paperclip,
   MessageSquare, CreditCard, Clock, FileText, Loader2, ExternalLink, Copy, Check,
-  Bookmark, BookmarkCheck,
+  Bookmark, BookmarkCheck, MoreHorizontal, RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { EtracsPaymentHistoryCard } from "@/components/etracs/EtracsPaymentHistoryCard";
 import { Property, Remark, Payment, Attachment } from "@/types";
 import {
   formatCurrency, formatDate, formatDateTime, formatFileSize,
@@ -29,6 +30,8 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
   const [saving,  setSaving]    = useState(false);
   const [form,    setForm]      = useState<Partial<Property>>({});
   const [saveError, setSaveError] = useState("");
+  const [etracsSyncing, setEtracsSyncing] = useState(false);
+  const [etracsSyncError, setEtracsSyncError] = useState("");
 
   // Modals
   const [payModal,    setPayModal]    = useState(false);
@@ -153,6 +156,27 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
     });
     await load();
     setStatusSaving(false);
+  };
+
+  const syncEtracs = async () => {
+    setEtracsSyncing(true);
+    setEtracsSyncError("");
+    try {
+      const response = await fetch(`/api/properties/${id}/etracs-sync`, { method: "POST" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setEtracsSyncError(result.error ?? "eTRACS sync failed. Try again.");
+        return;
+      }
+      if (result.property) {
+        setProperty(result.property);
+        setForm(result.property);
+      }
+    } catch {
+      setEtracsSyncError("Could not reach LedgerDex. Try again.");
+    } finally {
+      setEtracsSyncing(false);
+    }
   };
 
   const openEditPay = (pay: Payment) => {
@@ -309,27 +333,18 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
   if (!property) return <p className="text-slate-500">Property not found.</p>;
 
   const p = property;
+  const totalRecorded = (p.payments ?? []).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
 
   return (
-    <div className="animate-fade-in space-y-5">
-      <div className="flex items-center gap-2 text-sm text-slate-500">
-        <Link href="/properties" className="hover:text-slate-800 flex items-center gap-1">
-          <ArrowLeft size={14} /> Properties
-        </Link>
-        <span>/</span>
-        <button
-          onClick={() => copyTdNumber(p.tdNumber)}
-          title="Copy TD Number"
-          className="text-slate-800 font-mono font-medium flex items-center gap-1 hover:text-blue-600 transition-colors"
-        >
-          {p.tdNumber}
-          {copiedTD ? <Check size={12} className="text-green-500" /> : <Copy size={12} className="opacity-40" />}
-        </button>
-      </div>
+    <div className="animate-fade-in space-y-4">
+      <Link href="/properties" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700">
+        <ArrowLeft size={15} /> Back to properties
+      </Link>
 
       <PageHeader
         title={p.tdNumber}
         subtitle={p.propertyLocation ?? undefined}
+        className="mb-0"
         actions={
           editing ? (
             <>
@@ -345,8 +360,8 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
             </>
           ) : (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setDeleteModal(true)} className="text-red-500 hover:text-red-700 hover:bg-red-50">
-                <Trash2 size={14} /> Delete
+              <Button variant="secondary" size="sm" onClick={syncEtracs} loading={etracsSyncing}>
+                <RefreshCw size={14} /> {etracsSyncing ? "Syncing…" : "Sync eTRACS"}
               </Button>
               <Button
                 variant="ghost"
@@ -369,86 +384,101 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
         }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Left: property fields */}
-        <div className="lg:col-span-2 space-y-5">
-          <Card>
-            <CardHeader>
-              <h3 className="text-sm font-semibold text-slate-700">Property Details</h3>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-4">
-                {editing ? (
-                  <>
-                    <Input label="TD Number"          value={form.tdNumber ?? ""}           onChange={(e) => setForm({ ...form, tdNumber: e.target.value })} />
-                    <Input label="Property Index No." value={form.propertyIndexNo ?? ""}    onChange={(e) => setForm({ ...form, propertyIndexNo: e.target.value })} />
-                    <Input label="Property Location"  value={form.propertyLocation ?? ""}   onChange={(e) => setForm({ ...form, propertyLocation: e.target.value })} className="col-span-2" />
-                    <Input label="Barangay"           value={form.barangay ?? ""}           onChange={(e) => setForm({ ...form, barangay: e.target.value })} />
-                    <Input label="Municipality"       value={form.municipality ?? ""}       onChange={(e) => setForm({ ...form, municipality: e.target.value })} />
-                    <Input label="Lot/Block No."      value={form.lotBlockNo ?? ""}         onChange={(e) => setForm({ ...form, lotBlockNo: e.target.value })} />
-                    <Input label="Class"              value={form.class ?? ""}              onChange={(e) => setForm({ ...form, class: e.target.value })} />
-                    <Select label="Type" value={form.type ?? ""} onChange={(e) => setForm({ ...form, type: e.target.value as Property["type"] })}>
-                      {["LAND","BLDG","MACH","MISC"].map((t) => <option key={t} value={t}>{getPropertyTypeLabel(t as Property["type"])}</option>)}
-                    </Select>
-                    <Input label="Area (sqm)" type="number" value={form.area?.toString() ?? ""} onChange={(e) => setForm({ ...form, area: parseFloat(e.target.value) || undefined })} />
-                    <Input label="Market Value" type="number" value={form.marketValue?.toString() ?? ""} onChange={(e) => setForm({ ...form, marketValue: parseFloat(e.target.value) || undefined })} />
-                    <Input label="Assessed Value" type="number" value={form.assessedValue?.toString() ?? ""} onChange={(e) => setForm({ ...form, assessedValue: parseFloat(e.target.value) || undefined })} />
-                    <Input label="Effectivity (Year)" type="number" value={form.effectivity?.toString() ?? ""} onChange={(e) => setForm({ ...form, effectivity: parseInt(e.target.value) || undefined })} />
-                    <Select label="Taxability" value={form.taxability ?? "TAXABLE"} onChange={(e) => setForm({ ...form, taxability: e.target.value as Property["taxability"] })}>
-                      <option value="TAXABLE">Taxable</option>
-                      <option value="EXEMPT">Exempt</option>
-                    </Select>
-                    <Input label="Taxes Begin Year" type="number" value={form.taxesBeginYear?.toString() ?? ""} onChange={(e) => setForm({ ...form, taxesBeginYear: parseInt(e.target.value) || undefined })} />
-                    <Select label="Taxes Begin Quarter" value={form.taxesBeginQuarter?.toString() ?? ""} onChange={(e) => setForm({ ...form, taxesBeginQuarter: parseInt(e.target.value) || undefined })}>
-                      <option value="">—</option>
-                      {[1,2,3,4].map((q) => <option key={q} value={q}>Q{q}</option>)}
-                    </Select>
-                    <Select label="Payment Status" value={form.paymentStatus ?? "UNPAID"} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as Property["paymentStatus"] })}>
-                      {["PAID","PARTIAL","UNPAID","DELINQUENT","ADVANCE","CURRENT"].map((s) => <option key={s} value={s}>{s}</option>)}
-                    </Select>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <p className="text-xs text-slate-400 font-medium">TD Number</p>
-                      <button
-                        onClick={() => copyTdNumber(p.tdNumber)}
-                        title="Copy TD Number"
-                        className="text-sm text-slate-800 mt-0.5 font-mono flex items-center gap-1.5 hover:text-blue-600 transition-colors"
-                      >
-                        {p.tdNumber}
-                        {copiedTD ? <Check size={12} className="text-green-500" /> : <Copy size={12} className="opacity-40" />}
-                      </button>
-                    </div>
-                    {[
-                      ["Property Index No.", p.propertyIndexNo],
-                      ["Property Location",  p.propertyLocation, "col-span-2"],
-                      ["Barangay",           p.barangay],
-                      ["Municipality",       p.municipality],
-                      ["Lot/Block No.",      p.lotBlockNo],
-                      ["Class",              p.class],
-                      ["Type",               getPropertyTypeLabel(p.type)],
-                      ["Area (sqm)",         p.area != null ? Number(p.area).toLocaleString() : "—"],
-                      ["Market Value",       formatCurrency(p.marketValue as unknown as number)],
-                      ["Assessed Value",     formatCurrency(p.assessedValue as unknown as number)],
-                      ["Effectivity",        p.effectivity],
-                    ].map(([label, value, span]) => (
-                      <div key={label as string} className={span as string}>
-                        <p className="text-xs text-slate-400 font-medium">{label}</p>
-                        <p className="text-sm text-slate-800 mt-0.5 font-mono">{(value as string) ?? "—"}</p>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => copyTdNumber(p.tdNumber)}
+          title="Copy TD number"
+          aria-label={`Copy TD number ${p.tdNumber}`}
+          className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-left transition hover:border-blue-400 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-600">TD Number</span>
+          <span className="font-mono text-base font-bold tracking-wide text-blue-900 sm:text-lg">{p.tdNumber}</span>
+          {copiedTD ? <Check size={15} className="shrink-0 text-green-600" /> : <Copy size={15} className="shrink-0 text-blue-500" />}
+        </button>
+        <span className="text-xs text-slate-500">Review status</span>
+        <Badge variant={p.isChecked ? "success" : "default"} dot>{p.isChecked ? "Checked" : "Needs review"}</Badge>
+      </div>
 
-          {/* Tax & Payment Info */}
+      {etracsSyncError && <p role="alert" className="text-sm text-red-600">{etracsSyncError}</p>}
+
+      <Card className="overflow-hidden">
+        <CardHeader className="flex items-center justify-between gap-4 px-6 py-5">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Year-End Estimate</h3>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              Estimated total if billed on December 31, {p.etracsSnapshot?.projectionYear ?? new Date().getFullYear()}.
+            </p>
+          </div>
+          <Badge variant="warning" dot>Projected</Badge>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 items-center gap-6 px-6 py-6 md:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">Estimated amount</p>
+            <p className="mt-2 text-4xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-5xl">
+              {p.etracsSnapshot?.projectedAmountDue == null ? "—" : formatCurrency(p.etracsSnapshot.projectedAmountDue)}
+            </p>
+          </div>
+          <div className="border-t border-slate-200 pt-4 md:border-l md:border-t-0 md:pl-6 md:pt-0 dark:border-slate-700">
+            <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Based on eTRACS sync</p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              {p.etracsSnapshot
+                ? `Synced ${formatDateTime(p.etracsSnapshot.syncedAt)}. Assumes no later payments.`
+                : "Sync eTRACS to show this estimate."}
+            </p>
+            <p className="mt-2 text-xs text-slate-500">Estimate only. Not an eTRACS bill.</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader className="flex items-center justify-between px-5 py-4">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-100">eTRACS Current Figures</h3>
+            {p.etracsSnapshot ? (
+              <Badge variant={p.etracsSnapshot.status === "SETTLED" ? "success" : p.etracsSnapshot.status === "PARTIAL" ? "warning" : "danger"} dot>
+                {p.etracsSnapshot.status === "SETTLED" ? "Settled" : p.etracsSnapshot.status === "PARTIAL" ? "Partially paid" : "Outstanding"}
+              </Badge>
+            ) : <Badge variant="default">Not synced</Badge>}
+          </CardHeader>
+          <CardContent className="px-5 py-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div><p className="text-xs uppercase tracking-wide text-slate-400">Tax principal</p><p className="mt-1 text-2xl font-bold text-slate-900 dark:text-slate-100">{p.etracsSnapshot ? formatCurrency(p.etracsSnapshot.amountDue) : "—"}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-slate-400">Paid</p><p className="mt-1 text-2xl font-bold text-emerald-600">{p.etracsSnapshot ? formatCurrency(p.etracsSnapshot.amountPaid) : "—"}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-slate-400">Balance</p><p className="mt-1 text-2xl font-bold text-red-600">{p.etracsSnapshot ? formatCurrency(p.etracsSnapshot.balance) : "—"}</p></div>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              {p.etracsSnapshot
+                ? <>{p.etracsSnapshot.lastPaidYear
+                    ? `Paid through ${formatQuarter(p.etracsSnapshot.lastPaidYear, p.etracsSnapshot.lastPaidQuarter)}`
+                    : "No payment period reported"} · Synced {formatDateTime(p.etracsSnapshot.syncedAt)}</>
+                : "Sync eTRACS to load official figures."}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="px-5 py-4"><h3 className="text-sm font-semibold text-slate-700 dark:text-slate-100">LedgerDex Figures</h3></CardHeader>
+          <CardContent className="grid grid-cols-1 gap-4 px-5 py-4 sm:grid-cols-3">
+            <div><p className="text-xs uppercase tracking-wide text-slate-400">Assessed value</p><p className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">{formatCurrency(p.assessedValue as unknown as number)}</p></div>
+            <div><p className="text-xs uppercase tracking-wide text-slate-400">Market value</p><p className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">{formatCurrency(p.marketValue as unknown as number)}</p></div>
+            <div><p className="text-xs uppercase tracking-wide text-slate-400">Payments recorded</p><p className="mt-1 text-xl font-bold text-emerald-600">{formatCurrency(totalRecorded)}</p><p className="mt-1 text-xs text-slate-500">{p.payments?.length ?? 0} payment(s)</p></div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <EtracsPaymentHistoryCard
+        records={p.etracsSnapshot?.paymentHistory}
+        truncated={p.etracsSnapshot?.paymentHistoryTruncated}
+        synced={Boolean(p.etracsSnapshot)}
+      />
+
+      <div className="space-y-4">
+          {/* Tax & Payment Status */}
           <Card>
-            <CardHeader><h3 className="text-sm font-semibold text-slate-700">Tax & Payment Status</h3></CardHeader>
+            <CardHeader className="px-5 py-4"><h3 className="text-sm font-semibold text-slate-700">Tax & Payment Status</h3></CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
                   <p className="text-xs text-slate-400">Taxability</p>
                   <Badge variant={p.taxability === "TAXABLE" ? "info" : "default"} className="mt-1">{p.taxability}</Badge>
@@ -481,12 +511,73 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
                   <p className="text-sm text-slate-800 mt-0.5">{formatQuarter(p.paidUpToYear, p.paidUpToQuarter)}</p>
                 </div>
                 {p.document && (
-                  <div className="col-span-2">
+                  <div className="sm:col-span-2 xl:col-span-2">
                     <p className="text-xs text-slate-400">Source Document</p>
                     <Link href={`/documents/${p.document.id}`} className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
                       <FileText size={13} /> {(p.document as { originalName?: string }).originalName ?? "View Document"}
                     </Link>
                   </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+<Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-700">Property Details</h3>
+            </CardHeader>
+            <CardContent>
+              <div className={editing ? "grid grid-cols-1 gap-4 md:grid-cols-2" : "grid grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-4 xl:grid-cols-6"}>
+                {editing ? (
+                  <>
+                    <Input label="TD Number"          value={form.tdNumber ?? ""}           onChange={(e) => setForm({ ...form, tdNumber: e.target.value })} />
+                    <Input label="Property Index No." value={form.propertyIndexNo ?? ""}    onChange={(e) => setForm({ ...form, propertyIndexNo: e.target.value })} />
+                    <Input label="Property Location"  value={form.propertyLocation ?? ""}   onChange={(e) => setForm({ ...form, propertyLocation: e.target.value })} className="col-span-2" />
+                    <Input label="Barangay"           value={form.barangay ?? ""}           onChange={(e) => setForm({ ...form, barangay: e.target.value })} />
+                    <Input label="Municipality"       value={form.municipality ?? ""}       onChange={(e) => setForm({ ...form, municipality: e.target.value })} />
+                    <Input label="Lot/Block No."      value={form.lotBlockNo ?? ""}         onChange={(e) => setForm({ ...form, lotBlockNo: e.target.value })} />
+                    <Input label="Class"              value={form.class ?? ""}              onChange={(e) => setForm({ ...form, class: e.target.value })} />
+                    <Select label="Type" value={form.type ?? ""} onChange={(e) => setForm({ ...form, type: e.target.value as Property["type"] })}>
+                      {["LAND","BLDG","MACH","MISC"].map((t) => <option key={t} value={t}>{getPropertyTypeLabel(t as Property["type"])}</option>)}
+                    </Select>
+                    <Input label="Area (sqm)" type="number" value={form.area?.toString() ?? ""} onChange={(e) => setForm({ ...form, area: parseFloat(e.target.value) || undefined })} />
+                    <Input label="Market Value" type="number" value={form.marketValue?.toString() ?? ""} onChange={(e) => setForm({ ...form, marketValue: parseFloat(e.target.value) || undefined })} />
+                    <Input label="Assessed Value" type="number" value={form.assessedValue?.toString() ?? ""} onChange={(e) => setForm({ ...form, assessedValue: parseFloat(e.target.value) || undefined })} />
+                    <Input label="Effectivity (Year)" type="number" value={form.effectivity?.toString() ?? ""} onChange={(e) => setForm({ ...form, effectivity: parseInt(e.target.value) || undefined })} />
+                    <Select label="Taxability" value={form.taxability ?? "TAXABLE"} onChange={(e) => setForm({ ...form, taxability: e.target.value as Property["taxability"] })}>
+                      <option value="TAXABLE">Taxable</option>
+                      <option value="EXEMPT">Exempt</option>
+                    </Select>
+                    <Input label="Taxes Begin Year" type="number" value={form.taxesBeginYear?.toString() ?? ""} onChange={(e) => setForm({ ...form, taxesBeginYear: parseInt(e.target.value) || undefined })} />
+                    <Select label="Taxes Begin Quarter" value={form.taxesBeginQuarter?.toString() ?? ""} onChange={(e) => setForm({ ...form, taxesBeginQuarter: parseInt(e.target.value) || undefined })}>
+                      <option value="">—</option>
+                      {[1,2,3,4].map((q) => <option key={q} value={q}>Q{q}</option>)}
+                    </Select>
+                    <Select label="Payment Status" value={form.paymentStatus ?? "UNPAID"} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as Property["paymentStatus"] })}>
+                      {["PAID","PARTIAL","UNPAID","DELINQUENT","ADVANCE","CURRENT"].map((s) => <option key={s} value={s}>{s}</option>)}
+                    </Select>
+                  </>
+                ) : (
+                  <>
+                    {[
+                      ["Property Index No.", p.propertyIndexNo],
+                      ["Property Location",  p.propertyLocation, "col-span-2"],
+                      ["Barangay",           p.barangay],
+                      ["Municipality",       p.municipality],
+                      ["Lot/Block No.",      p.lotBlockNo],
+                      ["Class",              p.class],
+                      ["Type",               getPropertyTypeLabel(p.type)],
+                      ["Area (sqm)",         p.area != null ? Number(p.area).toLocaleString() : "—"],
+                      ["Market Value",       formatCurrency(p.marketValue as unknown as number)],
+                      ["Assessed Value",     formatCurrency(p.assessedValue as unknown as number)],
+                      ["Effectivity",        p.effectivity],
+                    ].map(([label, value, span]) => (
+                      <div key={label as string} className={span as string}>
+                        <p className="text-xs text-slate-400 font-medium">{label}</p>
+                        <p className="text-sm text-slate-800 mt-0.5 font-mono">{(value as string) ?? "—"}</p>
+                      </div>
+                    ))}
+                  </>
                 )}
               </div>
             </CardContent>
@@ -567,8 +658,7 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
           </Card>
         </div>
 
-        {/* Right: Remarks & Attachments */}
-        <div className="space-y-5">
+      <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2">
           {/* Remarks */}
           <Card>
             <CardHeader>
@@ -637,24 +727,30 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
             </CardContent>
           </Card>
 
-          {/* Meta */}
-          <Card>
-            <CardContent className="space-y-2 text-xs text-slate-500">
-              <div className="flex items-center gap-2">
-                <Clock size={12} />
-                <span>Created: {formatDateTime(p.createdAt)}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Clock size={12} />
-                <span>Updated: {formatDateTime(p.updatedAt)}</span>
-              </div>
-              {p.isManualEntry && (
-                <Badge variant="info" className="text-xs">Manual Entry</Badge>
-              )}
-            </CardContent>
-          </Card>
-        </div>
       </div>
+
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-4 text-xs text-slate-500">
+          <span className="inline-flex items-center gap-2"><Clock size={12} />Created: {formatDateTime(p.createdAt)}</span>
+          <span className="inline-flex items-center gap-2"><Clock size={12} />Updated: {formatDateTime(p.updatedAt)}</span>
+          {p.isManualEntry && <Badge variant="info" className="text-xs">Manual Entry</Badge>}
+        </CardContent>
+      </Card>
+
+      <details className="group relative flex justify-end">
+        <summary
+          aria-label="More property actions"
+          title="More property actions"
+          className="inline-flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-blue-500 [&::-webkit-details-marker]:hidden dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        >
+          <MoreHorizontal size={19} aria-hidden="true" />
+        </summary>
+        <div className="absolute bottom-full right-0 z-10 mb-2 min-w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+          <Button variant="ghost" size="sm" className="w-full justify-start text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300" onClick={() => setDeleteModal(true)}>
+            <Trash2 size={14} /> Delete property
+          </Button>
+        </div>
+      </details>
 
       {/* Payment Modal */}
       <Modal open={payModal} onClose={() => { setPayModal(false); setPasteError(""); }} title="Record Payment" size="lg">

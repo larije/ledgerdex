@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@prisma/client", "exceljs"],
   experimental: {
     serverActions: { bodySizeLimit: "50mb" },
+    proxyClientMaxBodySize: "52mb",
   },
   outputFileTracingExcludes: {
     "*": ["./next.config.ts"],

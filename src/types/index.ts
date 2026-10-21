@@ -66,10 +66,43 @@ export interface Property {
   isChecked: boolean;
   createdAt: string;
   updatedAt: string;
+  etracsSnapshot?: EtracsPropertySnapshot | null;
   remarks?: Remark[];
   payments?: Payment[];
   attachments?: Attachment[];
   _count?: { remarks: number; payments: number; attachments: number };
+}
+
+export interface EtracsPropertySnapshot {
+  propertyId: string;
+  faasId: string;
+  amountDue: number;
+  amountPaid: number;
+  balance: number;
+  projectedAmountDue: number | null;
+  projectionYear: number | null;
+  status: EtracsStatus;
+  lastPaidYear: number | null;
+  lastPaidQuarter: number | null;
+  paymentHistory: EtracsPaymentRecord[];
+  paymentHistoryTruncated: boolean;
+  syncedAt: string;
+}
+
+export interface EtracsPaymentRecord {
+  paymentId: string;
+  receiptNo: string | null;
+  receiptDate: string | null;
+  paidBy: string | null;
+  fromYear: number | null;
+  fromQuarter: number | null;
+  toYear: number | null;
+  toQuarter: number | null;
+  principal: string;
+  interest: string;
+  discount: string;
+  amnesty: string;
+  voided: boolean;
 }
 
 export interface Payment {
@@ -173,6 +206,23 @@ export interface SearchFilters {
 
 export type RpuType = "LAND" | "BLDG" | "MACH" | "PLANTTREE" | "MISC";
 export type SettlementStatus = "OUTSTANDING" | "PARTIAL" | "SETTLED" | "RESOLVED";
+export type EtracsStatus = "OUTSTANDING" | "PARTIAL" | "SETTLED";
+
+export interface EtracsSyncSnapshot {
+  accountId: string;
+  faasId: string;
+  amountDue: number;
+  amountPaid: number;
+  balance: number;
+  projectedAmountDue?: number | null;
+  projectionYear?: number | null;
+  status: EtracsStatus;
+  lastPaidYear?: number | null;
+  lastPaidQuarter?: number | null;
+  paymentHistory: EtracsPaymentRecord[];
+  paymentHistoryTruncated: boolean;
+  syncedAt: string;
+}
 
 // NOTE: Prisma serializes Decimal columns to strings over JSON. These money/area
 // fields are typed as `number` to match the existing Property convention; always
@@ -213,6 +263,9 @@ export interface DelinquentAccount {
   amountPaid: number;
   balance: number;
   status: SettlementStatus;
+  etracsStatus?: EtracsStatus | null;
+  etracsBalance?: number | null;
+  etracsProjectedAmountDue?: number | null;
   settledAt?: string | null;
   reappearedAfterSettle: boolean;
   firstSeenAt: string;
@@ -222,6 +275,7 @@ export interface DelinquentAccount {
   createdAt: string;
   updatedAt: string;
   settlements?: SettlementPayment[];
+  etracsSnapshot?: EtracsSyncSnapshot | null;
   _count?: { settlements: number };
 }
 

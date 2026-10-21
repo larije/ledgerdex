@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  Search, Loader2, FileSpreadsheet, FileDown, FileText, Mail, RotateCcw, Copy, Check,
+  Search, Loader2, FileSpreadsheet, FileDown, FileText, Mail, RotateCcw,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -14,7 +14,7 @@ import { useToast } from "@/components/ui/Toast";
 import { formatCurrency, copyToClipboard } from "@/lib/utils";
 import {
   RPU_TYPE_LABELS, classCodeLabel, formatDelinquentPeriod,
-  SETTLEMENT_STATUS_LABELS, SETTLEMENT_STATUS_VARIANT,
+  getAccountDisplayStatus, SETTLEMENT_STATUS_LABELS, SETTLEMENT_STATUS_VARIANT,
 } from "@/lib/delinquency";
 import {
   exportDelinquentAccountsCSV, exportDelinquencySummaryPDF, generateBatchNoticesPDF,
@@ -53,15 +53,22 @@ function CopyBtn({ text }: { text: string }) {
         if (ok) { setDone(true); toast("success", "Copied", text); setTimeout(() => setDone(false), 1200); }
         else toast("error", "Copy failed");
       }}
-      className="text-slate-300 hover:text-blue-500 dark:text-slate-600 dark:hover:text-blue-400 transition shrink-0"
-      title="Copy TD number"
+      type="button"
+      className={`font-mono text-xs transition shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+        done
+          ? "text-emerald-600 dark:text-emerald-400"
+          : "cursor-copy text-blue-600 hover:underline dark:text-blue-400"
+      }`}
+      title="Click to copy TD number"
+      aria-label={`Copy TD number ${text}`}
     >
-      {done ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+      {text}
     </button>
   );
 }
 
 export default function DelinquentAccountsPage() {
+  const router = useRouter();
   const { toast } = useToast();
   const [accounts, setAccounts] = useState<DelinquentAccount[]>([]);
   const [total, setTotal] = useState(0);
@@ -141,7 +148,7 @@ export default function DelinquentAccountsPage() {
     const p = new URLSearchParams(filterParams);
     p.set("page", String(page));
     p.set("limit", String(PAGE_SIZE));
-    const res = await fetch(`/api/delinquencies/accounts?${p}`);
+    const res = await fetch(`/api/delinquencies/accounts?${p}`, { cache: "no-store" });
     const data = await res.json();
     setAccounts(data.accounts ?? []);
     setTotal(data.total ?? 0);
@@ -151,6 +158,24 @@ export default function DelinquentAccountsPage() {
 
   // Only fetch after restore, so we don't flash default results first.
   useEffect(() => { if (ready) load(); }, [ready, load]);
+
+  // A synced account may be revisited with browser back/forward navigation,
+  // which can restore this page from the router cache without remounting it.
+  useEffect(() => {
+    const refreshVisibleList = () => {
+      if (ready && document.visibilityState === "visible") void load();
+    };
+    window.addEventListener("pageshow", refreshVisibleList);
+    window.addEventListener("focus", refreshVisibleList);
+    window.addEventListener("popstate", refreshVisibleList);
+    document.addEventListener("visibilitychange", refreshVisibleList);
+    return () => {
+      window.removeEventListener("pageshow", refreshVisibleList);
+      window.removeEventListener("focus", refreshVisibleList);
+      window.removeEventListener("popstate", refreshVisibleList);
+      document.removeEventListener("visibilitychange", refreshVisibleList);
+    };
+  }, [load, ready]);
 
   // Scroll the last-viewed row into view once results are in.
   useEffect(() => {
@@ -179,7 +204,7 @@ export default function DelinquentAccountsPage() {
     const p = new URLSearchParams(filterParams);
     p.set("page", "1");
     p.set("limit", "5000");
-    const res = await fetch(`/api/delinquencies/accounts?${p}`);
+    const res = await fetch(`/api/delinquencies/accounts?${p}`, { cache: "no-store" });
     const data = await res.json();
     return data.accounts ?? [];
   };
@@ -299,33 +324,37 @@ export default function DelinquentAccountsPage() {
               )}
               {accounts.map((a) => {
                 const isHighlight = a.id === highlightId;
+                const currentBalance = a.etracsBalance ?? Number(a.balance);
+                const displayBalance = a.etracsProjectedAmountDue ?? currentBalance;
+                const displayStatus = getAccountDisplayStatus(a.status, a.etracsStatus, displayBalance);
+                const balanceLabel = a.etracsProjectedAmountDue != null
+                  ? "Year-end estimate"
+                  : a.etracsBalance == null ? "LedgerDex" : "eTRACS";
                 return (
                   <tr
                     key={a.id}
                     ref={isHighlight ? rowRef : null}
-                    className={`transition ${
+                    onClick={(event) => {
+                      if (event.target instanceof Element && event.target.closest("a, button")) return;
+                      openAccount(a.id);
+                      router.push(`/delinquencies/accounts/${a.id}`);
+                    }}
+                    className={`cursor-pointer transition ${
                       isHighlight
-                        ? "bg-blue-50/80 dark:bg-blue-900/25 ring-1 ring-inset ring-blue-300 dark:ring-blue-700"
+                        ? "bg-blue-50/80 hover:bg-blue-100/80 dark:bg-blue-900/25 dark:hover:bg-blue-900/40 ring-1 ring-inset ring-blue-300 dark:ring-blue-700"
                         : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
                     }`}
                   >
                     <td className="px-3 py-2.5 text-right text-xs text-slate-400 tabular-nums">{a.rowNo ?? "—"}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1.5">
-                        <Link
-                          href={`/delinquencies/accounts/${a.id}`}
-                          onClick={() => openAccount(a.id)}
-                          className="font-mono text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                        >
-                          {a.tdNumber}
-                        </Link>
                         <CopyBtn text={a.tdNumber} />
                         {!a.isPresent && <RotateCcw size={11} className="text-slate-400" aria-label="off current list" />}
-                        {a.notes && a.notes.trim() !== "" && (
+                        {a.etracsBalance != null && (
                           <span
                             className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-900 shrink-0"
-                            title="Has a note"
-                            aria-label="Has a note"
+                            title="Synced with eTRACS"
+                            aria-label="Synced with eTRACS"
                           />
                         )}
                       </div>
@@ -341,10 +370,16 @@ export default function DelinquentAccountsPage() {
                     <td className="px-3 py-2.5 text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
                       {formatDelinquentPeriod(a.delinquentFromYear, a.delinquentFromQuarter, a.delinquentToYear, a.delinquentToQuarter)}
                     </td>
-                    <td className="px-3 py-2.5 text-right text-slate-700 dark:text-slate-300">{formatCurrency(Number(a.amountDue))}</td>
-                    <td className="px-3 py-2.5 text-right font-semibold text-slate-900 dark:text-slate-100">{formatCurrency(Number(a.balance))}</td>
+                    <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">
+                      <div>{formatCurrency(Number(a.amountDue))}</div>
+                      <div className="text-[10px] text-slate-400">LedgerDex</div>
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-900 dark:text-slate-100">
+                      <div>{formatCurrency(displayBalance)}</div>
+                      <div className="text-[10px] font-normal text-slate-400">{balanceLabel}</div>
+                    </td>
                     <td className="px-3 py-2.5">
-                      <Badge variant={SETTLEMENT_STATUS_VARIANT[a.status]} dot>{SETTLEMENT_STATUS_LABELS[a.status]}</Badge>
+                      <Badge variant={SETTLEMENT_STATUS_VARIANT[displayStatus]} dot>{SETTLEMENT_STATUS_LABELS[displayStatus]}</Badge>
                     </td>
                   </tr>
                 );
@@ -353,7 +388,7 @@ export default function DelinquentAccountsPage() {
             {!loading && accounts.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold text-slate-800 dark:text-slate-200">
-                  <td colSpan={6} className="px-4 py-3 text-right text-xs uppercase tracking-wide text-slate-500">Filter totals →</td>
+                  <td colSpan={6} className="px-4 py-3 text-right text-xs uppercase tracking-wide text-slate-500">LedgerDex filter totals →</td>
                   <td className="px-3 py-3 text-right">{formatCurrency(totals.amountDue)}</td>
                   <td className="px-3 py-3 text-right text-red-600">{formatCurrency(totals.balance)}</td>
                   <td />

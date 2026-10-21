@@ -1,4 +1,4 @@
-import { RpuType, SettlementStatus } from "@/types";
+import { EtracsStatus, RpuType, SettlementStatus } from "@/types";
 
 // ── Labels ────────────────────────────────────────────────────
 
@@ -31,6 +31,36 @@ export const SETTLEMENT_STATUS_LABELS: Record<SettlementStatus, string> = {
   SETTLED: "Settled",
   RESOLVED: "Resolved",
 };
+
+/** A zero or negative balance has no amount outstanding, so show it as settled. */
+export function getSettlementStatusForBalance(
+  status: SettlementStatus,
+  balance: number
+): SettlementStatus {
+  if (status === "RESOLVED") return status;
+  return balance <= 0 ? "SETTLED" : status;
+}
+
+/** Treat an eTRACS zero balance as settled, even when a stored status is stale. */
+export function getEtracsStatusForBalance(
+  status: EtracsStatus,
+  balance: number
+): EtracsStatus {
+  return balance <= 0 ? "SETTLED" : status;
+}
+
+/** A zero local balance settles the account; otherwise prefer the latest eTRACS status. */
+export function getAccountDisplayStatus(
+  localStatus: SettlementStatus,
+  etracsStatus?: EtracsStatus | null,
+  localBalance?: number | null
+): SettlementStatus {
+  const balanceAwareLocalStatus = localBalance == null
+    ? localStatus
+    : getSettlementStatusForBalance(localStatus, localBalance);
+  if (localBalance != null && localBalance <= 0) return balanceAwareLocalStatus;
+  return etracsStatus ?? balanceAwareLocalStatus;
+}
 
 /** Badge variant (matches components/ui/Badge variants) per status. */
 export const SETTLEMENT_STATUS_VARIANT: Record<
@@ -102,7 +132,7 @@ export function deriveStatus(
   current?: SettlementStatus
 ): SettlementStatus {
   if (current === "SETTLED" || current === "RESOLVED") return current;
+  if (amountDue - amountPaid <= 0) return "SETTLED";
   if (amountPaid <= 0) return "OUTSTANDING";
-  if (amountPaid < amountDue) return "PARTIAL";
-  return "SETTLED";
+  return "PARTIAL";
 }

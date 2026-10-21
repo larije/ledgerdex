@@ -8,12 +8,13 @@ import {
   PlusCircle,
   Upload,
   BarChart3,
-  ClipboardList,
-  Settings,
   ChevronLeft,
   ChevronRight,
   FileWarning,
   ListChecks,
+  Printer,
+  FolderOpen,
+  AppWindow,
 } from "lucide-react";
 
 interface NavItem {
@@ -51,15 +52,12 @@ const SECTIONS: NavSection[] = [
     ],
   },
   {
-    title: "Reports",
-    items: [{ href: "/reports", label: "Reports & Export", icon: BarChart3 }],
+    title: "Print Records",
+    items: [{ href: "/td-print-history", label: "TD Print History", icon: Printer }],
   },
   {
-    title: "System",
-    items: [
-      { href: "/audit", label: "Audit Trail", icon: ClipboardList },
-      { href: "/settings", label: "Settings", icon: Settings },
-    ],
+    title: "Reports",
+    items: [{ href: "/reports", label: "Reports & Export", icon: BarChart3 }],
   },
 ];
 
@@ -90,12 +88,14 @@ export function Sidebar() {
       {/* Logo area */}
       <div className="px-3.5 py-4 border-b border-gray-100 dark:border-slate-700 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800 flex items-center justify-center shrink-0 overflow-hidden">
+          <div className="h-11 w-11 shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/davao-del-norte-seal.png"
               alt="Davao del Norte Seal"
-              className="w-9 h-9 object-contain"
+              width={44}
+              height={44}
+              className="block h-11 w-11 rounded-full object-contain"
             />
           </div>
           {!collapsed && (
@@ -107,7 +107,7 @@ export function Sidebar() {
                 Davao del Norte
               </p>
               <p className="text-xs text-blue-500 dark:text-blue-400 leading-none mt-0.5 truncate">
-                Provincial Treasurer's Office
+                Provincial Treasurer&apos;s Office
               </p>
             </div>
           )}
@@ -161,8 +161,26 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Collapse toggle */}
-      <div className="shrink-0 border-t border-gray-100 dark:border-slate-700 p-2.5">
+      {/* Desktop application and collapse toggle */}
+      <div className="shrink-0 border-t border-gray-100 dark:border-slate-700 p-2.5 space-y-0.5">
+        <Link
+          href="/file-manager"
+          title="File Manager"
+          aria-label="File Manager"
+          className={`sidebar-nav-item ${pathname === "/file-manager" ? "sidebar-nav-item-active" : "sidebar-nav-item-inactive"}`}
+        >
+          <FolderOpen size={18} className="shrink-0" aria-hidden="true" />
+          {!collapsed && <span className="truncate">File Manager</span>}
+        </Link>
+        <a
+          href="ledgerdex-etracs:launch"
+          title="Open eTRACS on this computer"
+          aria-label="Open eTRACS on this computer"
+          className="sidebar-nav-item sidebar-nav-item-inactive focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+        >
+          <AppWindow size={18} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
+          {!collapsed && <span className="truncate">eTRACS</span>}
+        </a>
         <button
           onClick={toggle}
           className="sidebar-nav-item sidebar-nav-item-inactive w-full"

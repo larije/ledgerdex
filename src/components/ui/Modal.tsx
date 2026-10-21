@@ -1,5 +1,6 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
@@ -42,14 +43,21 @@ const panelVariants = {
   },
 } as const;
 
+const emptySubscribe = () => () => {};
+
 export function Modal({ open, onClose, title, children, size = "md" }: ModalProps) {
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     if (open) document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  return (
+  if (!mounted) return null;
+
+  // Escape transformed page containers so the backdrop fills the viewport.
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -109,6 +117,7 @@ export function Modal({ open, onClose, title, children, size = "md" }: ModalProp
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }

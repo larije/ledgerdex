@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import prisma from "@/lib/prisma";
-import { buildAccountWhere, buildAccountOrderBy } from "@/lib/delinquency-query";
+import {
+  buildAccountWhere,
+  buildAccountOrderBy,
+  getAccountIdsWithDisplayStatus,
+  getEtracsStatusesForAccountIds,
+} from "@/lib/delinquency-query";
 import {
   RPU_TYPE_LABELS,
   SETTLEMENT_STATUS_LABELS,
   SETTLEMENT_STATUS_COLORS,
   formatQuarterPeriod,
+  getAccountDisplayStatus,
 } from "@/lib/delinquency";
 import { SettlementStatus } from "@/types";
 
@@ -32,13 +38,15 @@ const TOTAL_COLS = COLS.length;
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    const where = buildAccountWhere(sp);
+    const statusAccountIds = await getAccountIdsWithDisplayStatus(prisma, sp);
+    const where = buildAccountWhere(sp, statusAccountIds);
 
     const accounts = await prisma.delinquentAccount.findMany({
       where,
       orderBy: buildAccountOrderBy(sp.get("sort")),
       include: { list: { select: { municipality: true } } },
     });
+    const etracsStatuses = await getEtracsStatusesForAccountIds(prisma, accounts.map((account) => account.id));
 
     const wb = new ExcelJS.Workbook();
     wb.creator = "LedgerDex";
@@ -95,7 +103,11 @@ export async function GET(req: NextRequest) {
           Number(a.amountDue),
           Number(a.amountPaid),
           Number(a.balance),
-          SETTLEMENT_STATUS_LABELS[a.status as SettlementStatus],
+          SETTLEMENT_STATUS_LABELS[getAccountDisplayStatus(
+            a.status as SettlementStatus,
+            etracsStatuses.get(a.id),
+            Number(a.balance)
+          )],
         ];
 
         values.forEach((val, ci) => {
@@ -110,7 +122,11 @@ export async function GET(req: NextRequest) {
           if (ci === 6 && typeof val === "number") cell.numFmt = "#,##0.##";
         });
 
-        const st = SETTLEMENT_STATUS_COLORS[a.status as SettlementStatus];
+        const st = SETTLEMENT_STATUS_COLORS[getAccountDisplayStatus(
+          a.status as SettlementStatus,
+          etracsStatuses.get(a.id),
+          Number(a.balance)
+        )];
         if (st) {
           const cell = row.getCell(15);
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${st.hex}` } };

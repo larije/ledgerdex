@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
+import { Prisma } from "@/generated/prisma";
+import { classCodeLabel } from "@/lib/delinquency";
 
 export async function GET(req: NextRequest) {
   try {
   const sp = new URL(req.url).searchParams;
   const page         = Math.max(1, parseInt(sp.get("page")  ?? "1"));
-  const limit        = Math.min(100, parseInt(sp.get("limit") ?? "25"));
+  const limit        = Math.min(5000, Math.max(1, parseInt(sp.get("limit") ?? "25")));
   const skip         = (page - 1) * limit;
   const search       = sp.get("search")       ?? "";
   const municipality = sp.get("municipality") ?? "";
@@ -14,6 +16,8 @@ export async function GET(req: NextRequest) {
   const type         = sp.get("type")         ?? "";
   const taxability   = sp.get("taxability")   ?? "";
   const status       = sp.get("status")       ?? "";
+  const classCode    = sp.get("classCode")    ?? "";
+  const sort         = sp.get("sort")         ?? "recent";
   const effectivity  = sp.get("effectivity")  ?? "";
   const isManual     = sp.get("isManual");
   const isChecked    = sp.get("isChecked");
@@ -39,19 +43,32 @@ export async function GET(req: NextRequest) {
   if (type)         AND.push({ type });
   if (taxability)   AND.push({ taxability });
   if (status)       AND.push({ paymentStatus: status });
+  if (classCode)    AND.push({ OR: [{ class: classCode }, { class: classCodeLabel(classCode) }] });
   if (effectivity)  AND.push({ effectivity:   parseInt(effectivity) });
   if (isManual  !== null && isManual  !== undefined) AND.push({ isManualEntry: isManual  === "true" });
   if (isChecked !== null && isChecked !== undefined) AND.push({ isChecked:    isChecked === "true" });
   if (documentId) AND.push({ documentId });
 
   const where = AND.length ? { AND } : {};
+  const orderByBySort: Record<string, Prisma.PropertyOrderByWithRelationInput[]> = {
+    tdNumber: [{ tdNumber: "asc" }],
+    municipality: [{ municipality: "asc" }, { tdNumber: "asc" }],
+    barangay: [{ barangay: "asc" }, { tdNumber: "asc" }],
+    classType: [{ class: "asc" }, { type: "asc" }, { tdNumber: "asc" }],
+    marketValue: [{ marketValue: "desc" }, { tdNumber: "asc" }],
+    assessedValue: [{ assessedValue: "desc" }, { tdNumber: "asc" }],
+    status: [{ paymentStatus: "asc" }, { tdNumber: "asc" }],
+    paidUpTo: [{ paidUpToYear: "desc" }, { paidUpToQuarter: "desc" }, { tdNumber: "asc" }],
+    recent: [{ createdAt: "desc" }],
+  };
+  const orderBy = orderByBySort[sort] ?? orderByBySort.recent;
 
-  const [properties, total] = await Promise.all([
+  const [properties, total, sums] = await Promise.all([
     prisma.property.findMany({
       where,
       skip,
       take: limit,
-      orderBy: { createdAt: "desc" },
+      orderBy,
       include: {
         document: { select: { id: true, originalName: true } },
         _count: { select: { remarks: true, payments: true, attachments: true } },
@@ -63,9 +80,10 @@ export async function GET(req: NextRequest) {
       },
     }),
     prisma.property.count({ where }),
+    prisma.property.aggregate({ where, _sum: { assessedValue: true } }),
   ]);
 
-  return NextResponse.json({ properties, total, page, limit });
+  return NextResponse.json({ properties, total, page, limit, totals: { assessedValue: Number(sums._sum.assessedValue ?? 0) } });
   } catch (e) {
     console.error("[GET /api/properties]", e);
     return NextResponse.json({ properties: [], total: 0, page: 1, limit: 25 }, { status: 500 });

@@ -30,6 +30,7 @@ services:
       JWT_SECRET: "ledgerdex-jwt-secret-change-in-production"
       NODE_ENV: "production"
       PORT: 3100
+      FILE_MANAGER_DIR: /app/uploads/file-manager
     ports:
       - "3100:3100"
     volumes:

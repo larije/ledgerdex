@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma";
+import { getAccountDisplayStatus } from "@/lib/delinquency";
+import { getEtracsBalancesForAccountIds } from "@/lib/delinquency-query";
 
 /**
  * Aggregated figures for the Delinquencies overview dashboard.
@@ -11,13 +13,13 @@ export async function GET() {
     const activeWhere: Prisma.DelinquentAccountWhereInput = {
       isPresent: true,
       status: { in: ["OUTSTANDING", "PARTIAL"] },
+      balance: { gt: 0 },
     };
 
     const [
       lists,
       outstanding,
-      activeCount,
-      settledCount,
+      statusCandidates,
       collected,
       byClass,
       byRpuType,
@@ -38,8 +40,10 @@ export async function GET() {
         },
       }),
       prisma.delinquentAccount.aggregate({ where: activeWhere, _sum: { balance: true } }),
-      prisma.delinquentAccount.count({ where: activeWhere }),
-      prisma.delinquentAccount.count({ where: { status: "SETTLED" } }),
+      prisma.delinquentAccount.findMany({
+        where: { isPresent: true },
+        select: { id: true, status: true, balance: true },
+      }),
       prisma.delinquentAccount.aggregate({ _sum: { amountPaid: true } }),
       prisma.delinquentAccount.groupBy({
         by: ["classCode"],
@@ -89,6 +93,30 @@ export async function GET() {
         },
       }),
     ]);
+
+    // Keep these dashboard counts aligned with the account list, which uses
+    // the eTRACS year-end estimate (when available) to derive displayed status.
+    const etracsBalances = await getEtracsBalancesForAccountIds(
+      prisma,
+      statusCandidates.map((account) => account.id)
+    );
+    let activeCount = 0;
+    let settledCount = 0;
+    for (const account of statusCandidates) {
+      const etracs = etracsBalances.get(account.id);
+      const displayBalance = etracs?.projectedAmountDue
+        ?? etracs?.balance
+        ?? Number(account.balance);
+      const displayStatus = getAccountDisplayStatus(
+        account.status,
+        etracs?.status,
+        displayBalance
+      );
+      if (displayStatus === "SETTLED") settledCount += 1;
+      else if ((displayStatus === "OUTSTANDING" || displayStatus === "PARTIAL") && displayBalance > 0) {
+        activeCount += 1;
+      }
+    }
 
     return NextResponse.json({
       totals: {

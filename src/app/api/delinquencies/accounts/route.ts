@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { buildAccountWhere, buildAccountOrderBy } from "@/lib/delinquency-query";
+import { getSettlementStatusForBalance } from "@/lib/delinquency";
+import {
+  buildAccountWhere,
+  buildAccountOrderBy,
+  getAccountIdsWithDisplayStatus,
+  getEtracsBalancesForAccountIds,
+} from "@/lib/delinquency-query";
 
 export async function GET(req: NextRequest) {
   try {
@@ -11,7 +17,8 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(5000, Math.max(1, parseInt(sp.get("limit") ?? "25")));
     const skip = (page - 1) * limit;
 
-    const where = buildAccountWhere(sp);
+    const statusAccountIds = await getAccountIdsWithDisplayStatus(prisma, sp);
+    const where = buildAccountWhere(sp, statusAccountIds);
     const orderBy = buildAccountOrderBy(sp.get("sort"));
 
     const [accounts, total, sums] = await Promise.all([
@@ -32,8 +39,20 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
+    const etracsBalances = await getEtracsBalancesForAccountIds(
+      prisma,
+      accounts.map((account) => account.id)
+    );
+    const accountsWithEtracsStatus = accounts.map((account) => ({
+      ...account,
+      status: getSettlementStatusForBalance(account.status, Number(account.balance)),
+      etracsStatus: etracsBalances.get(account.id)?.status ?? null,
+      etracsBalance: etracsBalances.get(account.id)?.balance ?? null,
+      etracsProjectedAmountDue: etracsBalances.get(account.id)?.projectedAmountDue ?? null,
+    }));
+
     return NextResponse.json({
-      accounts,
+      accounts: accountsWithEtracsStatus,
       total,
       page,
       limit,

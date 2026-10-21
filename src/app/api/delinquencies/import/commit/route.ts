@@ -6,6 +6,7 @@ import { getRequestUser, canWrite } from "@/lib/request-user";
 import { createAuditLog } from "@/lib/audit";
 import { extractDelinquencyPDF } from "@/lib/delinquency-extractor";
 import { reconcile, ExistingAccountLite } from "@/lib/delinquency-reconcile";
+import { getSettlementStatusForBalance } from "@/lib/delinquency";
 
 const UPLOAD_DIR = path.join(
   process.cwd(),
@@ -58,11 +59,12 @@ export async function POST(req: NextRequest) {
   const existingAccounts = existingList
     ? await prisma.delinquentAccount.findMany({
         where: { listId: existingList.id },
-        select: { id: true, tdNumber: true, status: true, isPresent: true, amountPaid: true },
+        select: { id: true, tdNumber: true, status: true, isPresent: true, amountPaid: true, settledAt: true },
       })
     : [];
 
   const paidById = new Map(existingAccounts.map((a) => [a.id, Number(a.amountPaid)]));
+  const existingById = new Map(existingAccounts.map((a) => [a.id, a]));
   const plan = reconcile(existingAccounts as ExistingAccountLite[], doc.rows);
 
   const asOf = doc.asOfDate ? new Date(doc.asOfDate) : null;
@@ -86,34 +88,42 @@ export async function POST(req: NextRequest) {
 
       if (plan.toCreate.length) {
         await tx.delinquentAccount.createMany({
-          data: plan.toCreate.map((row) => ({
-            listId: list.id,
-            rowNo: row.rowNo,
-            tdNumber: row.tdNumber,
-            pin: row.pin,
-            barangay: row.barangay,
-            classCode: row.classCode,
-            rpuType: row.rpuType,
-            areaSqm: row.areaSqm,
-            taxpayerName: row.taxpayerName || "—",
-            cadastralLotNo: row.cadastralLotNo,
-            delinquentFromYear: row.delinquentFromYear,
-            delinquentFromQuarter: row.delinquentFromQuarter,
-            delinquentToYear: row.delinquentToYear,
-            delinquentToQuarter: row.delinquentToQuarter,
-            amountDue: row.amountDue,
-            amountPaid: 0,
-            balance: row.amountDue,
-            status: "OUTSTANDING",
-            isPresent: true,
-            firstSeenAt: now,
-            lastSeenAt: now,
-          })),
+          data: plan.toCreate.map((row) => {
+            const balance = Number(row.amountDue);
+            const status = getSettlementStatusForBalance("OUTSTANDING", balance);
+            return {
+              listId: list.id,
+              rowNo: row.rowNo,
+              tdNumber: row.tdNumber,
+              pin: row.pin,
+              barangay: row.barangay,
+              classCode: row.classCode,
+              rpuType: row.rpuType,
+              areaSqm: row.areaSqm,
+              taxpayerName: row.taxpayerName || "—",
+              cadastralLotNo: row.cadastralLotNo,
+              delinquentFromYear: row.delinquentFromYear,
+              delinquentFromQuarter: row.delinquentFromQuarter,
+              delinquentToYear: row.delinquentToYear,
+              delinquentToQuarter: row.delinquentToQuarter,
+              amountDue: row.amountDue,
+              amountPaid: 0,
+              balance,
+              status,
+              settledAt: status === "SETTLED" ? now : null,
+              isPresent: true,
+              firstSeenAt: now,
+              lastSeenAt: now,
+            };
+          }),
         });
       }
 
       for (const u of plan.toUpdate) {
         const paid = paidById.get(u.id) ?? 0;
+        const previous = existingById.get(u.id);
+        const balance = Number(u.row.amountDue) - paid;
+        const status = getSettlementStatusForBalance(previous?.status ?? "OUTSTANDING", balance);
         await tx.delinquentAccount.update({
           where: { id: u.id },
           data: {
@@ -130,7 +140,9 @@ export async function POST(req: NextRequest) {
             delinquentToYear: u.row.delinquentToYear,
             delinquentToQuarter: u.row.delinquentToQuarter,
             amountDue: u.row.amountDue,
-            balance: Number(u.row.amountDue) - paid,
+            balance,
+            status,
+            settledAt: status === "SETTLED" ? previous?.settledAt ?? now : previous?.settledAt,
             lastSeenAt: now,
             isPresent: true,
             ...(u.reappearedAfterSettle ? { reappearedAfterSettle: true } : {}),

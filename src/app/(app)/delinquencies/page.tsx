@@ -27,35 +27,47 @@ interface Stats {
   oldest: { id: string; taxpayerName: string; tdNumber: string; balance: number; delinquentFromYear: number | null; delinquentFromQuarter: number | null; list: { municipality: string } }[];
 }
 
-function Kpi({ icon: Icon, label, value, tone }: { icon: React.ElementType; label: string; value: string; tone: string }) {
+function Kpi({
+  icon: Icon,
+  label,
+  value,
+  tone,
+  featured = false,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  tone: string;
+  featured?: boolean;
+}) {
   return (
-    <Card>
-      <CardContent className="flex items-center gap-4">
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${tone}`}>
-          <Icon size={20} />
+    <Card className={featured ? "border-red-200/80 bg-red-50/40 dark:border-red-900/50 dark:bg-red-950/15" : undefined}>
+      <CardContent className={`flex min-h-[108px] items-center gap-4 ${featured ? "sm:px-6" : ""}`}>
+        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${featured ? "h-14 w-14 rounded-2xl" : ""} ${tone}`}>
+          <Icon size={featured ? 22 : 20} />
         </div>
         <div className="min-w-0">
-          <p className="text-xl font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">{value}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{label}</p>
+          <p className={`truncate font-bold leading-tight tracking-tight text-slate-900 dark:text-slate-100 tabular-nums ${featured ? "text-2xl sm:text-3xl" : "text-xl"}`}>{value}</p>
+          <p className={`mt-1 text-xs ${featured ? "font-semibold uppercase tracking-[0.09em] text-red-700 dark:text-red-300" : "text-slate-500 dark:text-slate-400"}`}>{label}</p>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function Bars({ rows }: { rows: { label: string; count: number; balance: number }[] }) {
+function Bars({ rows, tone = "support" }: { rows: { label: string; count: number; balance: number }[]; tone?: "lead" | "support" }) {
   const max = Math.max(1, ...rows.map((r) => r.balance));
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-3">
       {rows.length === 0 && <p className="text-sm text-slate-400">No data.</p>}
       {rows.map((r, i) => (
         <div key={i}>
-          <div className="flex items-center justify-between text-xs mb-1">
-            <span className="text-slate-600 dark:text-slate-300 truncate">{r.label} <span className="text-slate-400">({r.count})</span></span>
-            <span className="text-slate-500 dark:text-slate-400 shrink-0 ml-2">{formatCurrency(r.balance)}</span>
+          <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
+            <span className="truncate font-medium text-slate-700 dark:text-slate-300">{r.label} <span className="font-normal text-slate-400">({r.count})</span></span>
+            <span className="ml-2 shrink-0 text-slate-500 dark:text-slate-400 tabular-nums">{formatCurrency(r.balance)}</span>
           </div>
-          <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-red-500 to-red-600 rounded-full" style={{ width: `${(r.balance / max) * 100}%` }} />
+          <div aria-hidden="true" className="h-2 rounded-full bg-slate-100 dark:bg-slate-700">
+            <div className={`h-full rounded-full ${tone === "lead" ? "bg-red-500" : "bg-blue-600 dark:bg-blue-500"}`} style={{ width: `${(r.balance / max) * 100}%` }} />
           </div>
         </div>
       ))}
@@ -68,7 +80,7 @@ export default function DelinquencyOverviewPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/delinquencies/stats")
+    fetch("/api/delinquencies/stats", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => setStats(d))
       .finally(() => setLoading(false));
@@ -101,11 +113,13 @@ export default function DelinquencyOverviewPage() {
       ) : (
         <>
           {/* KPIs */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Kpi icon={Wallet} label="Total Outstanding" value={formatCurrency(t!.outstandingBalance)} tone="bg-red-50 text-red-600 dark:bg-red-900/30" />
-            <Kpi icon={Users} label="Active Delinquent Accounts" value={t!.activeAccounts.toLocaleString()} tone="bg-amber-50 text-amber-600 dark:bg-amber-900/30" />
-            <Kpi icon={CheckCircle2} label="Settled Accounts" value={t!.settledAccounts.toLocaleString()} tone="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30" />
-            <Kpi icon={HandCoins} label="Total Collected" value={formatCurrency(t!.totalCollected)} tone="bg-blue-50 text-blue-600 dark:bg-blue-900/30" />
+          <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)]">
+            <Kpi featured icon={Wallet} label="Total Outstanding" value={formatCurrency(t!.outstandingBalance)} tone="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300" />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <Kpi icon={Users} label="Active Delinquent Accounts" value={t!.activeAccounts.toLocaleString()} tone="bg-amber-50 text-amber-600 dark:bg-amber-900/30" />
+              <Kpi icon={CheckCircle2} label="Settled Accounts" value={t!.settledAccounts.toLocaleString()} tone="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30" />
+              <Kpi icon={HandCoins} label="Total Collected" value={formatCurrency(t!.totalCollected)} tone="bg-blue-50 text-blue-600 dark:bg-blue-900/30" />
+            </div>
           </div>
 
           {/* Lists */}
@@ -133,9 +147,9 @@ export default function DelinquencyOverviewPage() {
                         </div>
                       </td>
                       <td className="px-3 py-3 text-slate-500 text-xs">{l.asOfDate ? formatDate(l.asOfDate) : "—"}</td>
-                      <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-300">{l.accountCount.toLocaleString()}</td>
-                      <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-300">{formatCurrency(Number(l.totalAmountDue))}</td>
-                      <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(Number(l.totalSettled))}</td>
+                      <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-300 tabular-nums">{l.accountCount.toLocaleString()}</td>
+                      <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-300 tabular-nums">{formatCurrency(Number(l.totalAmountDue))}</td>
+                      <td className="px-3 py-3 text-right text-emerald-600 tabular-nums">{formatCurrency(Number(l.totalSettled))}</td>
                       <td className="px-5 py-3 text-right">
                         <Link href={`/delinquencies/${l.id}`} className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline">
                           Open <ArrowRight size={12} />
@@ -153,7 +167,7 @@ export default function DelinquencyOverviewPage() {
             <Card>
               <CardHeader><CardTitle>Outstanding by Barangay</CardTitle></CardHeader>
               <CardContent>
-                <Bars rows={stats!.byBarangay.map((b) => ({ label: b.barangay ?? "—", count: b.count, balance: b.balance }))} />
+                <Bars tone="lead" rows={stats!.byBarangay.map((b) => ({ label: b.barangay ?? "—", count: b.count, balance: b.balance }))} />
               </CardContent>
             </Card>
             <div className="space-y-4">

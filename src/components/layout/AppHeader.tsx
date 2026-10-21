@@ -1,7 +1,8 @@
 "use client";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Menu, ChevronRight, ChevronDown, Search, Bell, Settings, Sun, Moon, BookmarkCheck, Clipboard } from "lucide-react";
+import { Menu, ChevronRight, ChevronDown, Search, Bell, Settings, Sun, Moon, BookmarkCheck, Clipboard, ClipboardList } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 import { useTheme } from "./ThemeContext";
 
@@ -10,6 +11,8 @@ const BREADCRUMB_MAP: Record<string, string[]> = {
   "/properties": ["Properties", "Property List"],
   "/properties/new": ["Properties", "Manual Entry"],
   "/documents": ["PDF Processing", "Upload PDFs"],
+  "/td-print-history": ["Print Records", "TD Print History"],
+  "/file-manager": ["File Manager"],
   "/delinquencies": ["Delinquencies", "Overview"],
   "/delinquencies/import": ["Delinquencies", "Import List"],
   "/delinquencies/accounts": ["Delinquencies", "Delinquent Accounts"],
@@ -63,6 +66,7 @@ export function AppHeader() {
 
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const [autoCheck, setAutoCheck] = useState(false);
   const [autoCopyTd, setAutoCopyTd] = useState(false);
 
@@ -149,8 +153,23 @@ export function AppHeader() {
           {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </button>
 
-        <div ref={settingsRef} className="relative">
+        <div
+          ref={settingsRef}
+          className="relative"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && showSettings) {
+              setShowSettings(false);
+              settingsButtonRef.current?.focus();
+            }
+          }}
+        >
           <button
+            ref={settingsButtonRef}
+            type="button"
+            title="System and quick settings"
+            aria-label="System and quick settings"
+            aria-expanded={showSettings}
+            aria-controls="header-settings-panel"
             onClick={() => setShowSettings((v) => !v)}
             className={`flex items-center gap-1 p-2.5 rounded-lg transition-colors
               ${showSettings
@@ -162,7 +181,30 @@ export function AppHeader() {
           </button>
 
           {showSettings && (
-            <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-lg dark:shadow-slate-900/50 z-50 p-1">
+            <div id="header-settings-panel" className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-lg dark:shadow-slate-900/50 z-50 p-1">
+              <nav aria-label="System">
+                <p className="px-3 py-2 text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">
+                  System
+                </p>
+                {[
+                  { href: "/audit", label: "Audit Trail", icon: ClipboardList },
+                  { href: "/settings", label: "Settings", icon: Settings },
+                ].map(({ href, label, icon: Icon }) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    onClick={() => setShowSettings(false)}
+                    aria-current={pathname === href ? "page" : undefined}
+                    className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 ${pathname === href
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                      : "text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-700"}`}
+                  >
+                    <Icon size={16} aria-hidden="true" />
+                    {label}
+                  </Link>
+                ))}
+              </nav>
+              <hr className="my-1 border-gray-100 dark:border-slate-700" />
               <p className="px-3 py-2 text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider">
                 Quick Settings
               </p>

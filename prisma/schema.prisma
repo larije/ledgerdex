@@ -99,6 +99,7 @@ model Property {
   payments    Payment[]
   attachments Attachment[]
   auditLogs   AuditLog[]
+  etracsSnapshot PropertyEtracsSyncSnapshot?
 
   @@index([tdNumber])
   @@index([municipality, barangay])
@@ -229,6 +230,12 @@ enum SettlementStatus {
   RESOLVED // dropped off a newer list (assumed paid/removed)
 }
 
+enum EtracsStatus {
+  OUTSTANDING
+  PARTIAL
+  SETTLED
+}
+
 /// One living delinquency list per municipality. Re-importing a newer
 /// snapshot reconciles into this same list (see lib/delinquency-reconcile.ts).
 model DelinquencyList {
@@ -288,6 +295,7 @@ model DelinquentAccount {
   updatedAt DateTime @updatedAt
 
   settlements SettlementPayment[]
+  etracsSnapshot EtracsSyncSnapshot?
 
   @@unique([listId, tdNumber])
   @@index([listId])
@@ -296,6 +304,46 @@ model DelinquentAccount {
   @@index([status])
   @@index([barangay])
   @@map("delinquent_accounts")
+}
+
+/// The latest official current tax state fetched from eTRACS for one LedgerDex account.
+model EtracsSyncSnapshot {
+  accountId      String            @id
+  account        DelinquentAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  faasId         String            @db.VarChar(128)
+  amountDue      Decimal           @db.Decimal(15, 2)
+  amountPaid     Decimal           @db.Decimal(15, 2)
+  balance        Decimal           @db.Decimal(15, 2)
+  projectedAmountDue Decimal?       @db.Decimal(15, 2)
+  projectionYear Int?
+  status         EtracsStatus
+  lastPaidYear   Int?
+  lastPaidQuarter Int?
+  paymentHistory Json?
+  paymentHistoryTruncated Boolean @default(false)
+  syncedAt       DateTime          @default(now())
+
+  @@map("etracs_sync_snapshots")
+}
+
+/// The latest official eTRACS snapshot fetched from a Property page.
+model PropertyEtracsSyncSnapshot {
+  propertyId      String       @id
+  property        Property     @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  faasId          String       @db.VarChar(128)
+  amountDue       Decimal      @db.Decimal(15, 2)
+  amountPaid      Decimal      @db.Decimal(15, 2)
+  balance         Decimal      @db.Decimal(15, 2)
+  projectedAmountDue Decimal?  @db.Decimal(15, 2)
+  projectionYear  Int?
+  status          EtracsStatus
+  lastPaidYear    Int?
+  lastPaidQuarter Int?
+  paymentHistory  Json?
+  paymentHistoryTruncated Boolean @default(false)
+  syncedAt        DateTime     @default(now())
+
+  @@map("property_etracs_sync_snapshots")
 }
 
 /// A settlement payment recorded against a delinquent account.
@@ -338,4 +386,62 @@ model DelinquencyImport {
 
   @@index([listId])
   @@map("delinquency_imports")
+}
+
+/// One recorded event for printing a batch of tax declaration numbers.
+model TDPrintBatch {
+  id        String          @id @default(cuid())
+  location  String          @db.VarChar(255)
+  note      String?         @db.Text
+  printedOn DateTime        @db.Date
+  createdAt DateTime        @default(now())
+  entries   TDPrintEntry[]
+
+  @@index([printedOn, createdAt])
+  @@map("td_print_batches")
+}
+
+/// The ordered TD numbers included in a print batch.
+model TDPrintEntry {
+  id       String       @id @default(cuid())
+  batchId  String
+  batch    TDPrintBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  tdNumber String       @db.VarChar(64)
+  position Int
+  isPrinted Boolean    @default(false)
+
+  @@unique([batchId, tdNumber])
+  @@index([tdNumber])
+  @@index([batchId, position])
+  @@map("td_print_entries")
+}
+
+/// User-created folders for the general file library.
+model FileFolder {
+  id        String        @id @default(cuid())
+  name      String        @unique @db.VarChar(100)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  files     ManagedFile[]
+
+  @@map("file_folders")
+}
+
+/// Uploaded copies, independent of PDF extraction and property attachments.
+model ManagedFile {
+  id         String      @id @default(cuid())
+  name       String      @db.VarChar(255)
+  storedName String      @unique
+  extension  String      @db.VarChar(10)
+  mimeType   String      @db.VarChar(120)
+  fileSize   Int
+  folderId   String?
+  folder     FileFolder? @relation(fields: [folderId], references: [id], onDelete: Restrict)
+  trashedAt  DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@index([folderId])
+  @@index([trashedAt])
+  @@map("managed_files")
 }

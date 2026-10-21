@@ -230,7 +230,7 @@ function DelinquencyMiniCard() {
   } | null>(null);
 
   useEffect(() => {
-    fetch("/api/delinquencies/stats")
+    fetch("/api/delinquencies/stats", { cache: "no-store" })
       .then((r) => r.json())
       .then((s) => setD(s?.totals ?? null))
       .catch(() => {});
